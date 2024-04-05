@@ -439,7 +439,7 @@ server <- function(input, output) {
                       "Upper 95% CI" = cate_ci_upr)
     
     # table of regression coefficients
-    tab3 <- dhs_emm_boot$stats %>%
+    tab3 <- statistics %>%
         filter(em %in% em_rejectT) %>%
         group_by(em) %>%
         group_modify(~ broom::tidy(lm(median_cate ~ quantile, data = .x))) %>%
