@@ -13,22 +13,22 @@ server <- function(input, output) {
     
     # load data and set outcome and exposure vectors, covariate and effect modifier matrices
     data <- read_csv("~/Documents/emm_local/data/data_droughts_malnutrition_101822.csv")
-    data <- data[sample(nrow(data), 10000, replace=F),]
+    # data <- data[sample(nrow(data), 10000, replace=F),]
     y <- pull(data, stunted)
     z <- pull(data, drought)
     X <- select(data, -c(stunted, drought))
     P <- select(X, education_none, mass_media, rural_residence)
-    quantiles = c(0,20,40,60,80,100)
-    B = 100
+    quantiles = c(0,25,50,75,100)
+    B = 200
     estimand = "rd" 
-    boot_ate = F
-    test = "Q"
+    test = "BH"
+    alpha = 0.05
     # show_bootd = show_bootci = "none"
 
     #---------------------------------helper functions--------------------------------------------------------------------------------
     
     # calculate population sd/bootstrap estimate sd
-    bsd <- function(x) sd(x)*sqrt((length(x)-1)/length(x))
+    bse <- function(x) sd(x)*sqrt((length(x)-1)/length(x))
     
     # cochran's Q test for heterogeneity
     cochrans_q_het <- function(ate, cate0, cate100, se0, se100, estimand) {
@@ -51,25 +51,53 @@ server <- function(input, output) {
     
     #----------------------------------------------------------------------------------------------------------------------------------
     
-    # if potential effect modifiers are unnamed, assign names
+    
+    # check that quantiles includes 0 and 100, if it doesn't throw error
+    if (any(!(c(0,100) %in% quantiles))) stop("0 and/or 100 are not included in vector of quantiles")
+    
+    # if candidate effect modifiers are unnamed, assign names
     if (sum(is.na(colnames(P))) != 0){
         colnames(P)[which(is.na(colnames(P)))] <- paste0("em", 1:sum(is.na(colnames(P))))
     } 
     
-    P <- as_tibble(P)
+    # Get levels of candidate effect modifiers
+    P_levels <- P %>%
+        map(unique) %>%
+        map(na.omit)
     
-    # create dummy indicators for multilevel categorical variables
-    mlP <- names(which(apply(P, 2, function(x) length(unique(na.omit(x)))) > 2))
-    for (p in mlP) {
-        mlP_form <- as.formula(paste0("~ -1 +", p))
+    P <- as_tibble(P) %>%
+        mutate_all(as_factor)
+    
+    # get names of multilevel categorical variables
+    mlP <- names(which(lengths(P_levels) > 2))
+    
+    # get names of binary character variables
+    cP <- P_levels %>%
+        map(as.numeric) %>%
+        map(is.na) %>%
+        map(all) %>%
+        as_vector()
+    bcP <- names(which(cP[!(names(cP) %in% all_of(mlP))]))
+    
+    # create dummy indicators for multilevel categorical variables and binary character variables
+    for (p in c(mlP, bcP)) {
+        mlP_form <- as.formula(paste0("~ -1 + ", p))
         P <- P %>%
             select(-all_of(p)) %>%
-            bind_cols(as_data_frame(model.matrix(mlP_form, data=P)))
+            bind_cols(as.data.frame(model.matrix(mlP_form, model.frame(~ ., P, na.action=na.pass))))
     }
+    
+    duplicate_bcP <- P_levels[bcP] %>% 
+        map_chr(c(2)) %>%
+        paste0(bcP, .)
+    
+    P <- P %>% 
+        select(-all_of(duplicate_bcP)) %>%
+        rename_with(~ gsub(" ", "_", .x))
     
     # create data frame of EM indicators for all 1 and 2-way interactions
     P <- P %>%
-        mutate_all(as.numeric)
+        mutate_if(is.factor, ~ as.numeric(.)-1)
     
     counter_P <- P %>%
         mutate_all(~ case_when(.x == 1 ~ 0,
@@ -80,11 +108,15 @@ server <- function(input, output) {
         rename_with(~ paste0(.x, "_1")) %>%
         cbind(., counter_P)
     
-    ems <- as_data_frame(model.matrix(~ .^2 - 1, data = full_P))
+    ems <- as.data.frame(model.matrix(~ .^2 - 1, data = full_P))
     
     remove <- c(paste0(names(P), "_0"), paste0(names(P), "_1"), 
                 paste0(names(P), "_1:", names(P), "_0"),
                 paste0(names(P), "_0:", names(P), "_1"))
+    
+    if (length(mlP) != 0) {
+        remove <- c(remove, names(full_P)[str_detect(names(full_P), paste(mlP, collapse="|"))])
+    }
     
     ems <- ems %>%
         dplyr::select(-any_of(remove)) %>%
@@ -111,17 +143,18 @@ server <- function(input, output) {
     #----------------------------------------------------------------------------------------------------------------------------------
     
     # instantiate bootstrap storage structure
-    ## hets = CATE - ATE, H_0: hets == 0, H_a: hets =/= 0
-    ## hets_bate = CATE - bootstrapped ATE
     boots <- tibble(quantile = numeric(),
                     em = character(),
                     cate = numeric(),
-                    hets = numeric(),
-                    hets_bate = numeric())
+                    cate_se = numeric())
     
-    if (boot_ate == F) {
-        boots <- dplyr::select(boots, -hets_bate)
-    } 
+    # if conducting bootstrap hypothesis test, instantiate storage structure for observed CATEs
+    if (test == "BH") {
+        bh_cates <- tibble(quantile = numeric(),
+                           em = character(),
+                           o_cate = numeric(),
+                           o_cate_se = numeric())
+    }
     
     # compute full data ATE 
     if (estimand == "or") {
@@ -145,6 +178,13 @@ server <- function(input, output) {
     n_iter <- n_ems*n_quantiles*B
     #-------------------------------------------------------------------------------------------------------------------------- 
     
+    # set regression model family based on desired estimand
+    if (estimand == "or") {
+        family <- "binomial"
+    } else if (estimand == "rd") {
+        family <- "gaussian"
+    } else {}
+    
     # conditional bootstrap
     cat("\n\nPerforming conditional boostrap:\n")
     
@@ -163,6 +203,20 @@ server <- function(input, output) {
         
         adj_X <- X %>%
             dplyr::select(-any_of(names(P)[ind_rep_em]))
+        
+        # if conducting bootstrap hypothesis test, estimate observed CATEs
+        if (test == "BH") {
+            
+            mod_cate0 <- glm(y ~ z + as.matrix(adj_X), family = family, subset = which(get(em, ems) == 0))
+            mod_cate100 <- glm(y ~ z + as.matrix(adj_X), family = family, subset = which(get(em, ems) == 1))
+            
+            bh_cates <- bh_cates %>% 
+                add_row(quantile = c(0,100),
+                        em = em,
+                        o_cate = c(mod_cate0$coefficients["z"], mod_cate100$coefficients["z"]),
+                        o_cate_se = c(summary(mod_cate0)$coefficients["z", "Std. Error"],
+                                      summary(mod_cate100)$coefficients["z", "Std. Error"]))
+        }
         
         for (q in quantiles) {
             
@@ -184,51 +238,13 @@ server <- function(input, output) {
                 ind_outem <- sample(outem, size=round(nrow(P)*(100-q)/100), replace=T)
                 cate_ind <- c(ind_inem, ind_outem)
                 
-                # if bootstrapping ATE, create second bootstrap sample within each iteration from full data to estimate ATE
-                if (boot_ate == T) {
-                    
-                    bate_ind <- sample(1:length(y), replace=T)
-                    
-                    if (estimand == "or") {
-                        bate_mod <- glm(y ~ z + as.matrix(X), family = binomial, subset = bate_ind)
-                        bate <- exp(bate_mod$coefficients["z"])
-                    } else if (estimand == "rd") {
-                        bate_mod <- lm(y ~ z + as.matrix(X), subset = bate_ind)
-                        bate <- bate_mod$coefficients["z"]
-                    } else {}
-                }
+                # create outcome model and add estimated CATE (and SE) to bootstrap storage structure
+                mod <- glm(y ~ z + as.matrix(adj_X), family = family, subset = cate_ind)
                 
-                # create outcome model based on desired estimand and add to bootstrap storage structure
-                if (estimand == "or") {
-                    mod <- glm(y ~ z + as.matrix(adj_X), family = binomial, subset = cate_ind)
-                    if (boot_ate == T) {
-                        boots <- boots %>% add_row(quantile = q,
-                                                   em = em,
-                                                   cate = exp(mod$coefficients["z"]),
-                                                   hets = exp(mod$coefficients["z"])/ate,
-                                                   hets_bate = exp(mod$coefficients["z"])/bate)
-                    } else {
-                        boots <- boots %>% add_row(quantile = q,
-                                                   em = em,
-                                                   cate = exp(mod$coefficients["z"]),
-                                                   hets = exp(mod$coefficients["z"])/ate)
-                    }
-                    
-                } else if (estimand == "rd") {
-                    mod <- lm(y ~ z + as.matrix(adj_X), subset = cate_ind)
-                    if (boot_ate == T) {
-                        boots <- boots %>% add_row(quantile = q,
-                                                   em = em,
-                                                   cate = mod$coefficients["z"],
-                                                   hets = mod$coefficients["z"] - ate,
-                                                   hets_bate = mod$coefficients["z"] - bate)
-                    } else {
-                        boots <- boots %>% add_row(quantile = q,
-                                                   em = em,
-                                                   cate = mod$coefficients["z"],
-                                                   hets = mod$coefficients["z"] - ate)
-                    }
-                } else {}
+                boots <- boots %>% add_row(quantile = q,
+                                           em = em,
+                                           cate = mod$coefficients["z"],
+                                           cate_se = summary(mod)$coefficients["z", "Std. Error"])
                 
                 # get time after bootstrap
                 end <- c(end, Sys.time())
@@ -256,35 +272,23 @@ server <- function(input, output) {
     cat("\n\n Conditional bootstrap complete.")
     
     # calculate means/medians, bootstrap confidence intervals
-    if (boot_ate == F) {
+    if (estimand == "or") {
+        statistics <- boots %>%
+            group_by(quantile, em) %>%
+            summarise(mean_cate = mean(exp(cate)),
+                      median_cate = median(exp(cate)),
+                      cate_se = bse(exp(cate)),
+                      cate_ci_lwr = quantile(exp(cate), probs = 0.025),
+                      cate_ci_upr = quantile(exp(cate), probs = 0.975))
+    } else if (estimand == "rd") {
         statistics <- boots %>%
             group_by(quantile, em) %>%
             summarise(mean_cate = mean(cate),
                       median_cate = median(cate),
-                      cate_se = bsd(cate),
+                      cate_se = bse(cate),
                       cate_ci_lwr = quantile(cate, probs = 0.025),
-                      cate_ci_upr = quantile(cate, probs = 0.975),
-                      mean_hets = mean(hets),
-                      median_hets = median(hets),
-                      hets_ci_lwr = quantile(hets, probs = 0.025),
-                      hets_ci_upr = quantile(hets, probs = 0.975))
-    } else {
-        statistics <- boots %>%
-            group_by(quantile, em) %>%
-            summarise(mean_cate = mean(cate),
-                      median_cate = median(cate),
-                      cate_se = bsd(cate),
-                      cate_ci_lwr = quantile(cate, probs = 0.025),
-                      cate_ci_upr = quantile(cate, probs = 0.975),
-                      mean_hets = mean(hets),
-                      median_hets = median(hets),
-                      hets_ci_lwr = quantile(hets, probs = 0.025),
-                      hets_ci_upr = quantile(hets, probs = 0.975),
-                      mean_hets_bate = mean(hets_bate),
-                      median_hets_bate = median(hets_bate),
-                      hets_bate_ci_lwr = quantile(hets_bate, probs = 0.025),
-                      hets_bate_ci_upr = quantile(hets_bate, probs = 0.975))
-    }
+                      cate_ci_upr = quantile(cate, probs = 0.975))
+    } else {}
     
     # make CATEs solid colors on plot if they are outside the ATE 95% CI
     statistics <- statistics %>%
@@ -296,34 +300,19 @@ server <- function(input, output) {
     ## check for overlapping of CIs
     if (test == "CI") {
         
-        statistics <- statistics %>%
+        ### candidates reject null hypothesis of homogeneity if at least one of the 0 or 100 quantile CIs do not overlap with the ATE CI
+        em_rejectT <- statistics %>%
+            filter(quantile == 0 | quantile == 100) %>%
             mutate(cate_ci_rejectT = case_when(cate_ci_lwr > ate_confint[2] ~ T,
                                                cate_ci_upr < ate_confint[1] ~ T,
-                                               T ~ F),
-                   hets_ci_rejectT = case_when(estimand == "or" & hets_ci_lwr < 1 & hets_ci_upr < 1 ~ T,
-                                               estimand == "or" & hets_ci_lwr > 1 & hets_ci_upr > 1 ~ T,
-                                               estimand == "rd" & hets_ci_lwr < 0 & hets_ci_upr < 0 ~ T,
-                                               estimand == "rd" & hets_ci_lwr > 0 & hets_ci_upr > 0 ~ T,
-                                               T ~ F))
-        
-        if (boot_ate == T) {
-            statistics <- statistics %>%
-                mutate(hets_bate_ci_rejectT = case_when(estimand == "or" & hets_bate_ci_lwr < 1 & hets_bate_ci_upr < 1 ~ T,
-                                                        estimand == "or" & hets_bate_ci_lwr > 1 & hets_bate_ci_upr > 1 ~ T,
-                                                        estimand == "rd" & hets_bate_ci_lwr < 0 & hets_bate_ci_upr < 0 ~ T,
-                                                        estimand == "rd" & hets_bate_ci_lwr > 0 & hets_bate_ci_upr > 0 ~ T,
-                                                        T ~ F))
-        }
-        
-        # only display EMs with CATEs that have at least one non-overlapping CI (across quantiles) with ATE 
-        em_rejectT <- statistics %>%
-            group_by(em) %>%
-            reframe(any_reject = any(cate_ci_rejectT)) %>%
-            filter(any_reject == T) %>%
-            pull(em)
+                                               T ~ F)) %>%
+            filter(cate_ci_rejectT == T) %>%
+            pull(em) %>%
+            unique()
         
     # conduct Cochran's Q test
     } else if (test == "Q") {
+        
         em_rejectT <- statistics %>% 
             group_by(em) %>%
             filter(quantile == min(quantiles) | quantile == max(quantiles)) %>%
@@ -333,11 +322,27 @@ server <- function(input, output) {
                                                  cate100 = last(mean_cate),
                                                  se0 = first(cate_se),
                                                  se100 = last(cate_se),
-                                                 estimand = estimand)[2] < 0.05) %>%
+                                                 estimand = estimand)[2] < alpha) %>%
             filter(Q_rejectT == T) %>%
             pull(em)
-        # TBD
-    } else if (test == "T") {
+        
+    # conduct bootstrap hypothesis one-sample test
+    } else if (test == "BH") {
+        
+        bh_cates <- bh_cates %>%
+            mutate(t = case_when(family == "gaussian" ~ (o_cate-ate)/o_cate_se,
+                                 family == "binomial" ~ (o_cate-log(ate))/o_cate_se))
+        
+        em_rejectT <- boots %>%
+            left_join(., bh_cates) %>%
+            filter(quantile == 0 | quantile == 100) %>%
+            mutate(boot_t = (cate-o_cate)/cate_se) %>%
+            group_by(quantile, em) %>%
+            summarise(bh_reject_pval = mean(abs(boot_t) > abs(t))) %>%
+            mutate(bh_rejectT = bh_reject_pval < alpha) %>%
+            filter(bh_rejectT == T) %>%
+            pull(em)
+        
     } else {}
     
     # filter out effect modifiers that failed to reject null of homogeneity
@@ -439,17 +444,25 @@ server <- function(input, output) {
                       "Upper 95% CI" = cate_ci_upr)
     
     # table of regression coefficients
-    tab3 <- statistics %>%
-        filter(em %in% em_rejectT) %>%
-        group_by(em) %>%
-        group_modify(~ broom::tidy(lm(median_cate ~ quantile, data = .x))) %>%
-        filter(term != "(Intercept)") %>%
-        select(em, estimate) %>%
-        arrange(desc(abs(estimate))) %>%
-        mutate(estimate = round(estimate, 5)) %>%
-        dplyr::rename("Effect Modifier" = em,
-                      "Coefficient Estimate" = estimate)
-        
+    if (length(em_rejectT) != 0) {
+        tab3 <- statistics %>%
+            filter(em %in% em_rejectT) %>%
+            group_by(em) %>%
+            group_modify(~ broom::tidy(lm(median_cate ~ quantile, data = .x))) %>%
+            filter(term != "(Intercept)") %>%
+            select(em, estimate, p.value) %>%
+            arrange(desc(abs(estimate))) %>%
+            mutate(estimate = round(estimate, 5),
+                   p.value = ifelse(p.value < 0.001, "<0.001", as.character(round(p.value, 3)))) %>%
+            dplyr::rename("Effect Modifier" = em,
+                          "Coefficient Estimate" = estimate,
+                          "P-value" = p.value)
+    } else {
+        tab3 <- tibble("Effect Modifier" = character(0),
+                       "Coefficient Estimate" = numeric(0),
+                       "P-value" = numeric(0))
+    }
+
     output$tab1 <- DT::renderDataTable(DT::datatable(tab1, rownames = F))
     output$tab2 <- DT::renderDataTable(DT::datatable(tab2, rownames = F))
     output$tab3 <- DT::renderDataTable(DT::datatable(tab3, rownames = F))
