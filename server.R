@@ -36,8 +36,6 @@ server <- function(input, output) {
         if (estimand == "rr" | estimand == "or") {
             cate0_diff <- log(cate0) - log(ate)
             cate100_diff <- log(cate100) - log(ate)
-            se0 <- log(se0)
-            se100 <- log(se100)
         } else if (estimand == "rd") {
             cate0_diff <- cate0 - ate
             cate100_diff <- cate100 - ate
@@ -277,7 +275,7 @@ server <- function(input, output) {
             group_by(quantile, em) %>%
             summarise(mean_cate = mean(exp(cate)),
                       median_cate = median(exp(cate)),
-                      cate_se = bse(exp(cate)),
+                      cate_lp_se = bse(cate),
                       cate_ci_lwr = quantile(exp(cate), probs = 0.025),
                       cate_ci_upr = quantile(exp(cate), probs = 0.975))
     } else if (estimand == "rd") {
@@ -285,7 +283,7 @@ server <- function(input, output) {
             group_by(quantile, em) %>%
             summarise(mean_cate = mean(cate),
                       median_cate = median(cate),
-                      cate_se = bse(cate),
+                      cate_lp_se = bse(cate),
                       cate_ci_lwr = quantile(cate, probs = 0.025),
                       cate_ci_upr = quantile(cate, probs = 0.975))
     } else {}
@@ -320,8 +318,8 @@ server <- function(input, output) {
             summarise(Q_rejectT = cochrans_q_het(ate = ate,
                                                  cate0 = first(mean_cate),
                                                  cate100 = last(mean_cate),
-                                                 se0 = first(cate_se),
-                                                 se100 = last(cate_se),
+                                                 se0 = first(cate_lp_se),
+                                                 se100 = last(cate_lp_se),
                                                  estimand = estimand)[2] < alpha) %>%
             filter(Q_rejectT == T) %>%
             pull(em)
@@ -341,7 +339,8 @@ server <- function(input, output) {
             summarise(bh_reject_pval = mean(abs(boot_t) > abs(t))) %>%
             mutate(bh_rejectT = bh_reject_pval < alpha) %>%
             filter(bh_rejectT == T) %>%
-            pull(em)
+            pull(em) %>%
+            unique()
         
     } else {}
     
