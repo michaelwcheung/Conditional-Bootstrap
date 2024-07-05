@@ -13,12 +13,12 @@ server <- function(input, output) {
     
     # load data and set outcome and exposure vectors, covariate and effect modifier matrices
     data <- read_csv("~/Documents/emm_local/data/data_droughts_malnutrition_101822.csv")
-    # data <- data[sample(nrow(data), 10000, replace=F),]
+    data <- data[sample(nrow(data), 10000, replace=F),]
     y <- pull(data, stunted)
     z <- pull(data, drought)
     X <- select(data, -c(stunted, drought))
-    P <- select(X, education_none, mass_media, rural_residence)
-    quantiles = c(0,25,50,75,100)
+    P <- select(X, education_none, rural_residence)
+    quantiles = c(0,50,100)
     B = 200
     estimand = "rd" 
     test = "BH"
@@ -45,6 +45,18 @@ server <- function(input, output) {
         p <- pchisq(Q, 1, lower.tail = F)
         
         return(c(Q, p))
+    }
+    
+    # Create matrix of covariates that doesn't include specified candidate effect modifier (local function for conditional bootstrap method)
+    generate_adj_X <- function(em, X, P) {
+        curr_em <- str_split(em,":")[[1]]
+        ind_rep_em <- which(c(paste0(names(P), "_1"), paste0(names(P), "_0")) %in% curr_em) %% ncol(P)
+        ind_rep_em <- ifelse(ind_rep_em == 0, ind_rep_em + ncol(P), ind_rep_em)
+        
+        adj_X <- X %>%
+            dplyr::select(-any_of(names(P)[ind_rep_em]))
+        
+        return(adj_X)
     }
     
     #----------------------------------------------------------------------------------------------------------------------------------
@@ -75,7 +87,7 @@ server <- function(input, output) {
         map(is.na) %>%
         map(all) %>%
         as_vector()
-    bcP <- names(which(cP[!(names(cP) %in% all_of(mlP))]))
+    bcP <- names(which(cP[!(names(cP) %in% mlP)]))
     
     # create dummy indicators for multilevel categorical variables and binary character variables
     for (p in c(mlP, bcP)) {
@@ -183,6 +195,9 @@ server <- function(input, output) {
         family <- "gaussian"
     } else {}
     
+    # if performing Cochran's Q test before bootstrapping, create list of effect modifiers
+    if (test == "PQ") em_rejectT <- character(0)
+    
     # conditional bootstrap
     cat("\n\nPerforming conditional boostrap:\n")
     
@@ -195,25 +210,38 @@ server <- function(input, output) {
         q_counter <- 0 
         
         # create matrix of confounders and effect modifiers that don't belong to current em
-        curr_em <- str_split(em,":")[[1]]
-        ind_rep_em <- which(c(paste0(names(P), "_1"), paste0(names(P), "_0")) %in% curr_em) %% ncol(P)
-        ind_rep_em <- ifelse(ind_rep_em == 0, ind_rep_em + ncol(P), ind_rep_em)
+        adj_X <- generate_adj_X(em, X, P)
         
-        adj_X <- X %>%
-            dplyr::select(-any_of(names(P)[ind_rep_em]))
-        
-        # if conducting bootstrap hypothesis test, estimate observed CATEs
-        if (test == "BH") {
+        # estimate observed CATEs if conducting bootstrap hypothesis test or prior Cochran's Q test
+        if (test == "BH" | test == "PQ") {
             
             mod_cate0 <- glm(y ~ z + as.matrix(adj_X), family = family, subset = which(get(em, ems) == 0))
             mod_cate100 <- glm(y ~ z + as.matrix(adj_X), family = family, subset = which(get(em, ems) == 1))
             
-            bh_cates <- bh_cates %>% 
-                add_row(quantile = c(0,100),
-                        em = em,
-                        o_cate = c(mod_cate0$coefficients["z"], mod_cate100$coefficients["z"]),
-                        o_cate_se = c(summary(mod_cate0)$coefficients["z", "Std. Error"],
-                                      summary(mod_cate100)$coefficients["z", "Std. Error"]))
+            if (test == "BH") {
+                
+                bh_cates <- bh_cates %>% 
+                    add_row(quantile = c(0,100),
+                            em = em,
+                            o_cate = c(mod_cate0$coefficients["z"], mod_cate100$coefficients["z"]),
+                            o_cate_se = c(summary(mod_cate0)$coefficients["z", "Std. Error"],
+                                          summary(mod_cate100)$coefficients["z", "Std. Error"]))
+            } else if (test == "PQ") {
+                
+                PQ_rejectT <- cochrans_q_het(ate = ate,
+                                             cate0 = mod_cate0$coefficients["z"],
+                                             cate100 = mod_cate100$coefficients["z"],
+                                             se0 = summary(mod_cate0)$coefficients["z", "Std. Error"],
+                                             se100 = summary(mod_cate100)$coefficients["z", "Std. Error"],
+                                             estimand = estimand)[2] < alpha
+                
+                if (PQ_rejectT) {
+                    em_rejectT <- c(em_rejectT, em)
+                } else {
+                    next
+                }
+            }    
+            
         }
         
         for (q in quantiles) {
