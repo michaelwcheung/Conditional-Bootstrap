@@ -132,26 +132,26 @@ server <- function(input, output) {
         dplyr::select(-any_of(remove)) %>%
         cbind(P, .)
     
-    # check positivity: print proportions of observations for each effect modifier interaction (and size)
-    #   throw warning if less than 5 observations in or not in
+    # check positivity: print prevalence of observations for each effect modifier interaction (and size)
+    #   throw warning if less than 5% or more than 95% prevalence
     cat("Checking positivity...\n")
     tab1 <- tibble("Effect Modifier (Interaction)" = names(ems),
-                   "Proportion in Data" = paste0(round(apply(ems, 2, mean, na.rm=T)*100, 2), "%"),
+                   "Prevalence" = paste0(round(apply(ems, 2, mean, na.rm=T)*100, 2), "%"),
                    "In-Count" = apply(ems, 2, sum, na.rm=T),
                    "Out-Count" = apply(ems, 2, function (x) sum(x == 0, na.rm = T)))
     
-    colnames(tab1)[2] <- paste0("Proportion in Data (N=", nrow(ems), ")")
+    colnames(tab1)[2] <- paste0("Prevalence, N=", nrow(ems), "(%)")
     
     #------------------------Implement throw as popup later------------------------------------------------------------------------
-    if (any(tab1$`In-Count`<=5) | any(tab1$`Out-Count`<=5)) {
+    if (any(tab1$`In-Count`/nrow(ems) < 0.05) | any(tab1$`Out-Count`/nrow(ems) < 0.05)) {
         prob_em <- tab1 %>%
-            filter(`In-Count`<=5 | `Out-Count`<=5) %>%
+            filter(`In-Count`/nrow(ems) < 0.05 | `Out-Count`/nrow(ems) < 0.05) %>%
             pull(`Effect Modifier (Interaction)`)
-        warning("The following interactions have less than 5 in- or out-count observations. Bootstrap results may be biased:")
+        warning("The following interactions have less than 5% or more than 95% prevalence. Bootstrap results may be biased:")
         print(prob_em)
     }
     #----------------------------------------------------------------------------------------------------------------------------------
-    
+
     # instantiate bootstrap storage structure
     boots <- tibble(quantile = numeric(),
                     em = character(),
@@ -166,16 +166,22 @@ server <- function(input, output) {
                            o_cate_se = numeric())
     }
     
-    # compute full data ATE 
+    # set regression model family based on desired estimand
     if (estimand == "or") {
-        ate_mod <- glm(y ~ z + as.matrix(X), family = binomial)
-        ate <- exp(ate_mod$coefficients["z"])
-        ate_confint <- exp(confint(ate_mod)["z",1:2])
+        family <- "binomial"
     } else if (estimand == "rd") {
-        ate_mod <- lm(y ~ z + as.matrix(X))
-        ate <- ate_mod$coefficients["z"]
-        ate_confint <- confint(ate_mod)["z",1:2]
+        family <- "gaussian"
     } else {}
+    
+    # compute full data ATE 
+    ate_mod <- glm(y ~ z + as.matrix(X), family = family)
+    ate <- ate_mod$coefficients["z"]
+    ate_confint <- confint(ate_mod)["z",1:2]
+    
+    if (estimand == "or") {
+        ate <- exp(ate)
+        ate_confint <- exp(ate_confint)
+    }
     
     #--------------------------------------------------------Implement progress bar as popup later---------------------------- 
     # initialize counters and time storage vectors
@@ -187,13 +193,6 @@ server <- function(input, output) {
     n_quantiles <- length(quantiles)
     n_iter <- n_ems*n_quantiles*B
     #-------------------------------------------------------------------------------------------------------------------------- 
-    
-    # set regression model family based on desired estimand
-    if (estimand == "or") {
-        family <- "binomial"
-    } else if (estimand == "rd") {
-        family <- "gaussian"
-    } else {}
     
     # if performing Cochran's Q test before bootstrapping, create list of effect modifiers
     if (test == "PQ") em_rejectT <- character(0)
