@@ -1,0 +1,34 @@
+.shiny-notification {
+  height: 200px;
+  width: 800px;
+  top: calc(50% - 100px);
+  left: calc(50% - 400px);
+  position: fixed;
+  font-size: 200%;
+  text-align: center;
+}
+
+.progress-message, .progress-detail {
+  float: left;
+  clear: left;
+}
+
+/*.shiny-progress-container {
+  position: fixed;
+  top: 0px;
+  width: 100%;
+  z-index: 2000;
+}
+
+.shiny-progress .progress {
+  position: absolute;
+  width: 100%;
+  top: 0px;
+  height: 8px;
+  margin: 0px;
+}
+
+.shiny-progress .bar {
+  background-color: #c1f29d;
+  .opacity = 0.8;
+}*/

@@ -1,0 +1,12 @@
+"","Effect Modifier","Coefficient Estimate"
+"1","education_none_1:rural_residence_1",0.00046
+"2","education_none_0:mass_media_0",-0.00043
+"3","education_none",4e-04
+"4","mass_media_0:rural_residence_0",-4e-04
+"5","education_none_1:mass_media_1",0.00034
+"6","rural_residence_1:education_none_0",-0.00031
+"7","rural_residence",0.00024
+"8","education_none_0:rural_residence_0",-0.00023
+"9","mass_media_1:education_none_0",-0.00023
+"10","education_none_1:mass_media_0",0.00018
+"11","mass_media_1:rural_residence_1",1e-04
