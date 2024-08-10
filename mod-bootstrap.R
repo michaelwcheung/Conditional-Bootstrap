@@ -29,9 +29,9 @@ bootstrap_ui <- function(id) {
         ns("estimand_type"),
         "Select the type of estimand:",
         c(
-          "risk difference" = "rd",
-          "risk ratio" = "rr",
-          "odds ratio" = "or"
+          "Risk difference" = "rd",
+          "Risk ratio" = "rr",
+          "Odds ratio" = "or"
         )
       ),
       br(),
@@ -40,8 +40,8 @@ bootstrap_ui <- function(id) {
           "Select the heterogeneity test:",
           c(
               "Cochran's Q" = "Q",
-              "Bootstrap Hypothesis Difference of Means" = "BH",
-              "Confidence Interval Overlap" = "CI",
+              "Bootstrap hypothesis difference of means" = "BH",
+              "Confidence interval overlap" = "CI",
               "Pre-bootstrap Cochran's Q" = "PQ"
           )
       ),
@@ -52,7 +52,7 @@ bootstrap_ui <- function(id) {
         c(
           "Outcome regression (adjusted)" = "lr",
           "IP weighting" = "iptw",
-          "doubly robust" = "dr"
+          "Doubly robust (currently does not work with bootstrap hypothesis test)" = "dr"
         )
       ),
       br(), 
