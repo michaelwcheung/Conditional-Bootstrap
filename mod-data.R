@@ -6,7 +6,6 @@ data_ui <- function(id) {
   tabPanel(
     title = "Upload Data",
     value = ns("tab"),
-    class = "p-3 border-top-0",
     tagList(
       h3("Upload Data"),
       fileInput(ns("upload"), NULL, buttonLabel="Browse", accept=".csv"),

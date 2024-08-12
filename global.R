@@ -16,6 +16,7 @@ library(pals) # color palette for plot
 library(thematic)
 
 # source modules
+source("mod-about.R")
 source("mod-data.R")
 source("mod-bootstrap.R")
 source("mod-results.R")
@@ -24,6 +25,5 @@ source("helper-functions.R")
 # allow for larger files to be uploaded
 options(shiny.maxRequestSize=30*1024^2)
 
-# enable thematic
-thematic::thematic_shiny(font = "auto")
-theme_set(theme_bw(base_size = 16))
+# view dependency tree
+options(shiny.reactlog = TRUE)
