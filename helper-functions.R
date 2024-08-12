@@ -89,6 +89,28 @@ dr_estimate <- function(data, indices, y, z, X, estimand, cate = F, ps) {
     else if (estimand == "or") return( (exp_y1*(1-exp_y0)) / (exp_y0*(1-exp_y1)) )
 }
 
+# augumented iptw estimator with standard error estimates (doubly robust) from Lunceford and Davidian
+aiptw <- function(data, subset, y, z, X, estimand, cate = F, ps) {
+  subset_y <- y[subset]
+  subset_z <- z[subset]
+  subset_adj_X <- X[subset, ]
+  subset_data <- data[subset, ]
+  
+  if (cate == F) propensity <- 1 / ipweights(subset_data, subset_adj_X, subset_z)
+  else propensity <- 1 / ps[subset]
+  
+  m_1 <- predict(lm(subset_y ~ subset_z + as.matrix(subset_adj_X), subset = (subset_z == 1)), subset_adj_X)
+  m_0 <- predict(lm(subset_y ~ subset_z + as.matrix(subset_adj_X), subset = (subset_z == 0)), subset_adj_X)
+  mu_1 <- ((subset_z * subset_y) - (subset_z - propensity) * m_1) / propensity
+  mu_0 <- (((1 - subset_z) * subset_y) + (subset_z - propensity) * m_0) / (1 - propensity)
+  dr <- mean(mu_1) - mean(mu_0)
+  
+  # standard error
+  dr_se <- sqrt(mean((mu_1 - mu_0 - dr)^2) / length(mu_1))
+  
+  return(c(dr, dr_se))
+}
+
 # estimate ATE using specified method
 estimate_ate <- function(data, y, z, X, estimand, family, estimation_method, propensity) {
     
@@ -131,8 +153,9 @@ estimate_cate <- function(data, y, z, adj_X, subset, estimand, family, estimatio
   }
     
   if (estimation_method == "dr") {
-    cate <- dr_estimate(data, subset, y, z, adj_X, estimand, cate = T, propensity)
-    cate_se <- NA # figure out how to estimate this later, using Lunceford and Davidian formula for now which assumes correct exposure and outcome model specification
+    aiptw_estimate <- aiptw(data, subset, y, z, adj_X, estimand, cate = T, propensity) # new function needed to obtain se
+    cate <- aiptw_estimate[1]
+    cate_se <- aiptw_estimate[2] # figure out how to estimate this later, using Lunceford and Davidian formula for now which assumes correct exposure and outcome model specification
   }
     
   return(c(cate, cate_se))
