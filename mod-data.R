@@ -7,26 +7,22 @@ data_ui <- function(id) {
     title = "Upload Data",
     value = ns("tab"),
     tagList(
-      h3("Upload Data"),
-      fileInput(ns("upload"), NULL, buttonLabel="Browse", accept=".csv"),
-      DT::dataTableOutput(ns("raw_data")),
-      br(),
-      uiOutput(ns("next_varselect")),
-      br(),
-      uiOutput(ns("varselect")),
-      br(),
-      uiOutput(ns("next_varverify")),
-      br(),
-      uiOutput(ns("varverify")),
-      DT::dataTableOutput(ns("varverify_table")),
-      br(),
-      uiOutput(ns("next_emprevalence")),
-      br(),
-      uiOutput(ns("emprevalence")),
-      DT::dataTableOutput(ns("emprevalence_table")),
-      br(),
-      uiOutput(ns("next_bootstrap")),
-      br()
+      useShinyFeedback(),
+      div(
+        style = "margin-bottom: 50px;",
+        h2("Upload Data"),
+        fileInput(ns("upload"), NULL, buttonLabel = "Browse", accept = ".csv"),
+        DT::dataTableOutput(ns("raw_data")),
+        uiOutput(ns("next_varselect")),
+        uiOutput(ns("varselect")),
+        uiOutput(ns("next_varverify")),
+        uiOutput(ns("varverify")),
+        DT::dataTableOutput(ns("varverify_table")),
+        uiOutput(ns("next_emprevalence")),
+        uiOutput(ns("emprevalence")),
+        DT::dataTableOutput(ns("emprevalence_table")),
+        uiOutput(ns("next_bootstrap"))
+      )
     )
   )
 }
@@ -36,7 +32,7 @@ data_server <- function(id, store) {
     ns <- NS(id)
     
     # load data from file upload
-    data_1 <- reactive({
+    data <- reactive({
       req(input$upload)
       
       ext <- tools::file_ext(input$upload$name)
@@ -48,13 +44,9 @@ data_server <- function(id, store) {
     })
     
     # add raw data to the store
-    observeEvent(data_1(), {
+    observeEvent(data(), {
       store$data <- NULL
-      
-      log_event <- paste0("Uploaded ", input$upload$name)
-      store$log <- append(store$log, log_event)
-      
-      store$data <- data_1() # might do additional cleaning?
+      store$data <- data() # might do additional cleaning?
       # store$data <- data_1()[sample(nrow(data_1()), 10000, replace=F), ]
     })
     
@@ -68,8 +60,7 @@ data_server <- function(id, store) {
         session$ns("next_varselect"), 
         "Next: Variable Selection", 
         icon("hand-pointer"), 
-        class = "btn-outline-primary",
-        style = button_style
+        class = "btn-outline-primary"
       )
     })
     
@@ -278,7 +269,7 @@ data_server <- function(id, store) {
         session$ns("next_varverify"), 
         " Next: Covariate Data Type Verification", 
         icon("hand-pointer"), 
-        style="color: #fff; background-color: #337ab7; border-color: #2e6da4"
+        class = "btn-outline-primary"
       )
     })
     
@@ -332,7 +323,7 @@ data_server <- function(id, store) {
         session$ns("next_emprevalence"),
         " Next: Confirm Effect Modifier Prevalence",
         icon("hand-pointer"),
-        style = "color: #fff; background-color: #337ab7; border-color: #2e6da4"
+        class = "btn-outline-primary"
       )
     }) |> bindEvent(input$next_varverify)
     
@@ -459,7 +450,7 @@ data_server <- function(id, store) {
         session$ns("next_bootstrap"),
         " Next: Set Bootstrap Parameters",
         icon("hand-pointer"),
-        style = "color: #fff; background-color: #337ab7; border-color: #2e6da4"
+        class = "btn-outline-primary"
       )
     })
     

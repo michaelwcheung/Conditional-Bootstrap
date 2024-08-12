@@ -8,7 +8,8 @@ ui <- htmltools::tagQuery(navbarPage(
   padding = 10,
   
   tags$head(
-    tags$style(HTML("div.container-fluid { width: 97%; } h3 { padding-top: 40px; }"))
+    tags$style(HTML("div.container-fluid { width: 97%; } h3 { padding-top: 40px; }")),
+    tags$link(rel = "stylesheet", type = "text/css", href = "style.css")
   ),
   
   about_ui(id = "module_about"),

@@ -6,64 +6,65 @@ bootstrap_ui <- function(id) {
   tabPanel(
     title = "Set Bootstrap Parameters", 
     value = ns("tab"),
-    class = "p-3 border-top-0",
     tagList(
-      h3("Set Bootstrap Parameters"),
-      fluidRow(
-        column(
-          6,
-          radioButtons(
-            ns("quantile"),
-            "Select quantile:",
-            trad_quantiles
-          )
+      div(
+        style = "margin-bottom: 50px;",
+        h2("Set Bootstrap Parameters"),
+        
+        radioButtons(
+          ns("quantile"),
+          "Select quantile:",
+          trad_quantiles,
+          width = "100%"
         ),
-        column(
-          6,
-          textInput(ns("custom_quantile"), "Enter a custom quantile (please ensure 0 and 100 are included!):"),
-          actionButton(ns("add"), "Add custom quantile")
-        )
-      ),
-      br(),
-      radioButtons(
-        ns("estimand_type"),
-        "Select the type of estimand:",
-        c(
-          "Risk difference" = "rd",
-          "Risk ratio" = "rr",
-          "Odds ratio" = "or"
-        )
-      ),
-      br(),
-      radioButtons(
+        textInput(
+          ns("custom_quantile"), 
+          "Or enter a custom quantile (please ensure 0 and 100 are included!):"
+        ),
+        actionButton(ns("add"), "Add custom quantile"),
+        br(),
+        br(),
+        radioButtons(
+          ns("estimand_type"),
+          "Select the type of estimand:",
+          c(
+            "Risk difference" = "rd",
+            "Risk ratio" = "rr",
+            "Odds ratio" = "or"
+          ),
+          width = "100%"
+        ),
+        radioButtons(
           ns("heterogeneity_test"),
           "Select the heterogeneity test:",
           c(
-              "Cochran's Q" = "Q",
-              "Bootstrap hypothesis difference of means" = "BH",
-              "Confidence interval overlap" = "CI",
-              "Pre-bootstrap Cochran's Q" = "PQ"
-          )
-      ),
-      br(), 
-      radioButtons(
-        ns("estimation_method"),
-        "Select the estimation method for causal effect:",
-        c(
-          "Outcome regression (adjusted)" = "lr",
-          "IP weighting" = "iptw",
-          "Doubly robust (currently does not work with bootstrap hypothesis test)" = "dr"
-        )
-      ),
-      br(), 
-      numericInput(ns("bootstrap_samples"), "Number of bootstrap samples:", 100),
-      br(),
-      uiOutput(ns("bootstrap")),
-      br(),
-      uiOutput(ns("bootstrap_progress")),
-      br(),
-      uiOutput(ns("next_results")),
-      br()
+            "Cochran's Q" = "Q",
+            "Bootstrap hypothesis difference of means" = "BH",
+            "Confidence interval overlap" = "CI",
+            "Pre-bootstrap Cochran's Q" = "PQ"
+          ),
+          width = "100%"
+        ),
+        radioButtons(
+          ns("estimation_method"),
+          "Select the estimation method for causal effect:",
+          c(
+            "Outcome regression (adjusted)" = "lr",
+            "IP weighting" = "iptw",
+            "Doubly robust (currently does not work with bootstrap hypothesis test)" = "dr"
+          ),
+          width = "100%"
+        ),
+        numericInput(
+          ns("bootstrap_samples"), 
+          "Number of bootstrap samples:", 
+          100,
+          min = 1
+        ),
+        uiOutput(ns("bootstrap")),
+        uiOutput(ns("bootstrap_progress")),
+        uiOutput(ns("next_results"))
+      )
     )
   )
 }
@@ -91,7 +92,7 @@ bootstrap_server <- function(id, store) {
           session$ns("bootstrap"),
           " Start Bootstrap!",
           icon("hand-pointer"),
-          style = button_style
+          class = "btn-success"
         )#,
         # progressBar(
         #   session$ns("bootstrap_progress"),
@@ -151,25 +152,26 @@ bootstrap_server <- function(id, store) {
           propensity <- rep(1, length(z))
       } else {}
       
-      # compute full data ATE
-      ate_estimate <- estimate_ate(store$data, y, z, X, estimand, family, estimation_method, propensity)
-      ate <- store$ate <- ate_estimate[1]
-      ate_confint <- store$ate_confint <- ate_estimate[2:3]
-      
-      # initialize counters and time storage vectors
-      init <- numeric()
-      end <- numeric()
-      em_counter <- 0
-      b_counter <- 0
-      n_ems <- ncol(ems)
-      n_quantiles <- length(quantiles)
-      n_iter <- n_ems * n_quantiles * B
-      
-      # if performing Cochran's Q test before bootstrapping, create list of effect modifiers
-      if (test == "PQ") em_rejectT <- character(0)
-      
-      # conditional bootstrap
-      withProgress(message = "Performing conditional bootstrap\n", {
+      withProgress(message = "Performing conditional bootstrap\n", value = 0, {
+        incProgress(0, detail = HTML(paste("Computing ATE.")))
+        # compute full data ATE
+        ate_estimate <- estimate_ate(store$data, y, z, X, estimand, family, estimation_method, propensity)
+        ate <- store$ate <- ate_estimate[1]
+        ate_confint <- store$ate_confint <- ate_estimate[2:3]
+        
+        # initialize counters and time storage vectors
+        init <- numeric()
+        end <- numeric()
+        em_counter <- 0
+        b_counter <- 0
+        n_ems <- ncol(ems)
+        n_quantiles <- length(quantiles)
+        n_iter <- n_ems * n_quantiles * B
+        
+        # if performing Cochran's Q test before bootstrapping, create list of effect modifiers
+        if (test == "PQ") em_rejectT <- character(0)
+        
+        # conditional bootstrap
         for (em in names(ems)) {
           em_counter <- em_counter + 1 # counter for em
           q_counter <- 0 # counter for quantile
@@ -227,9 +229,9 @@ bootstrap_server <- function(id, store) {
               cate_estimate <- estimate_cate(store$data, y, z, adj_X, cate_ind, estimand, family, estimation_method, propensity)
               
               boots <- boots %>% add_row(quantile = q,
-                                          em = em, 
-                                          cate = cate_estimate[1],
-                                          cate_se = cate_estimate[2])
+                                         em = em, 
+                                         cate = cate_estimate[1],
+                                         cate_se = cate_estimate[2])
               
               # time after bootstrap
               end <- c(end, Sys.time())
@@ -360,7 +362,7 @@ bootstrap_server <- function(id, store) {
         session$ns("next_results"),
         " Next: See Results",
         icon("hand-pointer"),
-        style = button_style
+        class = "btn-outline-primary"
       )
     })
     

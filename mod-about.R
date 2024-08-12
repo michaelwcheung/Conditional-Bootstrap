@@ -17,11 +17,11 @@ about_ui <- function(id) {
           tags$li("In the 'Set parameters' tab, set your parameters for the bootstrap process."),
           tags$li("In the 'Bootstrap results' tab, view and download plots and tables about your effect modifiers by quantiles.")
         ),
-        p("Please submit any feedback or questions at ", a(href="https://forms.gle/5e2kCDpNN2VvVkSd7", "this form", .noWS = "outside"), ". Thank you!"),
+        p("Please submit any feedback or questions to ", a(href="https://forms.gle/5e2kCDpNN2VvVkSd7", "this form", .noWS = "outside"), ". Thank you!"),
         actionButton(ns("start"),
                      " Start Analyzing!",
                      icon("hand-pointer"),
-                     class = "btn-outline-primary")
+                     class = "btn-primary")
       )
     )
   )

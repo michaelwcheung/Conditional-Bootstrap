@@ -6,20 +6,22 @@ results_ui <- function(id) {
   tabPanel(
     title = "Bootstrap Results",
     value = ns("tab"),
-    class = "p-3 border-top-0",
     tagList(
-      h3("Bootstrap Results"),
-      br(),
-      plotlyOutput(ns("plot")),
-      br(),
-      uiOutput(ns("em_quantile")),
-      DT::dataTableOutput(ns("em_quantile_table")),
-      uiOutput(ns("download_em_quantile_table")),
-      br(),
-      uiOutput(ns("regression_coefficients")),
-      DT::dataTableOutput(ns("regression_coefficients_table")),
-      uiOutput(ns("download_regression_coefficients_table")),
-      br()
+      div(
+        style = "margin-bottom: 50px;",
+        h2("Bootstrap Results"),
+        br(),
+        plotlyOutput(ns("plot")),
+        br(),
+        uiOutput(ns("em_quantile")),
+        DT::dataTableOutput(ns("em_quantile_table")),
+        uiOutput(ns("download_em_quantile_table")),
+        br(),
+        uiOutput(ns("regression_coefficients")),
+        DT::dataTableOutput(ns("regression_coefficients_table")),
+        uiOutput(ns("download_regression_coefficients_table")),
+        br()
+      )
     )
   )
 }
