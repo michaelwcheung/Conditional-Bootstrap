@@ -164,7 +164,7 @@ estimate_cate <- function(data, y, z, adj_X, subset, estimand, family, estimatio
 # create matrix of covariates that doesn't include specified candidate effect modifier (local function for conditional bootstrap method)
 generate_adj_X <- function(em, X, P) {
   curr_em <- str_split(em, ":")[[1]]
-  ind_rep_em <- which(c(paste0(names(P), "_1"), paste0(names(P), "_0")) %in% curr_em) %% ncol(P)
+  ind_rep_em <- which(c(paste0(names(P), "_1"), paste0(names(P), "_0"), names(P)) %in% curr_em) %% ncol(P)
   ind_rep_em <- ifelse(ind_rep_em == 0, ind_rep_em + ncol(P), ind_rep_em)
   
   adj_X <- X %>%
