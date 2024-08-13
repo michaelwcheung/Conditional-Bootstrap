@@ -134,6 +134,7 @@ results_server <- function(id, store) {
           scale_linetype_identity(guide = "none",
                                   labels = c("Significant","Between Significance Threshold","Insignificant"),
                                   breaks = c("solid","dashed","dotted"))
+        
         # ranking of CATEs by effect modifier and quantile
         em_quantile_table <- statistics %>%
           filter(em %in% em_rejectT) %>%
@@ -148,6 +149,9 @@ results_server <- function(id, store) {
             "Lower 95% CI" = cate_ci_lwr,
             "Upper 95% CI" = cate_ci_upr
           )
+        
+        em_quantile_table["Median Sorter"] <- abs(em_quantile_table["Median CATE"])
+        em_quantile_table["Mean Sorter"] <- abs(em_quantile_table["Mean CATE"])
         
         # table of regression coefficients
         regression_coefficients_table <- statistics %>%
@@ -164,6 +168,8 @@ results_server <- function(id, store) {
             "Coefficient Estimate" = estimate,
             "P-value" = p.value
           )
+        
+        regression_coefficients_table["Coefficient Sorter"] <- abs(regression_coefficients_table["Coefficient Estimate"])
         
         store$em_quantile_table <- em_quantile_table
         store$regression_coefficients_table <- regression_coefficients_table
@@ -229,14 +235,20 @@ results_server <- function(id, store) {
       }
     })
     
-    output$em_quantile_table <- DT::renderDataTable(DT::datatable(store$em_quantile_table, rownames=F, options=list(scrollX=T, scrollY="200px")))
-    
-    # output$download_em_quantile_table <- downloadHandler(
-    #   filename = function() {"em_quantile_table.csv"},
-    #   content = function(fname) {
-    #     write.csv(store$em_quantile_table, fname)
-    #   }
-    # )
+    output$em_quantile_table <- DT::renderDataTable(DT::datatable(
+      store$em_quantile_table, 
+      rownames = F, 
+      options = list(
+        columnDefs = list(
+          list(orderData = 6, targets = 2),
+          list(orderData = 7, targets = 3),
+          list(visible = FALSE, targets = 6),
+          list(visible = FALSE, targets = 7)
+        ),
+        scrollX = T, 
+        scrollY = "200px"
+      )
+    ))
     
     # download em_quantile_table
     output$download_em_quantile_table <- renderUI({
@@ -258,18 +270,24 @@ results_server <- function(id, store) {
       )
     })
     
-    output$regression_coefficients_table <- DT::renderDataTable(
-      DT::datatable(store$regression_coefficients_table, 
-                    rownames=F, 
-                    options=list(scrollX=T, scrollY="200px",
-                                 rowCallback = JS(
-                                   "function (row, data, displayNum, displayIndex, dataIndex) {",
-                                   "var row_name = 'This value means that a one percentile increase in ' + data[0] + ' changes the risk of outcome by ' + data[1] + '.';",
-                                   "$(row).find('td').attr('title', row_name);",
-                                   "}"
-                                 ))
-                    )
-    )
+    output$regression_coefficients_table <- DT::renderDataTable(DT::datatable(
+      store$regression_coefficients_table, 
+      rownames = F, 
+      options=list(
+        columnDefs = list(
+          list(orderData = 3, targets = 1),
+          list(visible = FALSE, targets = 3)
+        ),
+        scrollX=T, 
+        scrollY="200px",
+        rowCallback = JS(
+         "function (row, data, displayNum, displayIndex, dataIndex) {",
+         "var row_name = 'This value means that a one percentile increase in ' + data[0] + ' changes the risk of outcome by ' + data[1] + '.';",
+         "$(row).find('td').attr('title', row_name);",
+         "}"
+        )
+      )
+    ))
     
     # download regression_coefficients_table
     output$download_regression_coefficients_table <- renderUI({

@@ -314,7 +314,7 @@ data_server <- function(id, store) {
       store$variable_verification <- tab1
     })
     
-    output$varverify_table <- DT::renderDataTable(DT::datatable(store$variable_verification, rownames=F, options=list(scrollX=T, scrollY="200px")))
+    output$varverify_table <- DT::renderDataTable(DT::datatable(store$variable_verification, rownames=F, options=list(scrollX=T, scrollY="200px"))) |> bindEvent(input$next_varverify)
     
     # start effect modifier prevalence!
     output$next_emprevalence <- renderUI({
@@ -332,7 +332,16 @@ data_server <- function(id, store) {
       tagList(
         h3("Effect Modifier Prevalence in Data")
       )
-    }) |> bindEvent(input$next_emprevalence)
+    }) |> bindEvent(emprevalence_show(input$next_varverify, input$next_emprevalence))
+    
+    # hack to remove em prevalence when inputs change
+    emprevalence_show <- function(prevbutton, nextbutton) {
+      if (is.null(nextbutton)) return()
+      if (any(is.null(c(prevbutton, nextbutton)))) return()
+      if (any(c(prevbutton, nextbutton) == 0)) return()
+      if (prevbutton < nextbutton) return()
+      return(1)
+    }
     
     # display table of effect modifier prevalence
     observeEvent(input$next_emprevalence, {
@@ -347,91 +356,101 @@ data_server <- function(id, store) {
       X <- select(out, -c(outcome, treatment))
       P <- select(X, all_of(candidates))
       
-      # check that candidate effect modifiers are named
-      if (sum(is.na(colnames(P))) != 0) {
-        colnames(P)[which(is.na(colnames(P)))] <- paste0("em", 1:sum(is.na(colnames(P))))
-      }
-      
-      # get levels of candidate effect modifiers
-      P_levels <- P %>%
-        map(unique) %>%
-        map(na.omit)
-      
-      P <- as_tibble(P) %>%
-        mutate_all(as_factor)
-      
-      # get names of multilevel categorical variables
-      mlP <- names(which(lengths(P_levels) > 2))
-      
-      # get names of binary character variables
-      cP <- P_levels %>%
-        map(as.numeric) %>%
-        map(is.na) %>%
-        map(all) %>%
-        as_vector()
-      
-      bcP <- names(which(cP[!(names(cP) %in% all_of(mlP))]))
-      
-      # create dummy indicators for mlP and cP
-      for (p in c(mlP, bcP)) {
-        mlP_form <- as.formula(paste0("~ -1 + ", p))
+      withProgress(message = "Computing Effect Modifier Prevalence", value = 0, {
+        # check that candidate effect modifiers are named
+        if (sum(is.na(colnames(P))) != 0) {
+          colnames(P)[which(is.na(colnames(P)))] <- paste0("em", 1:sum(is.na(colnames(P))))
+        }
+        
+        incProgress(0, detail = HTML(paste("Creating effect modifier matrix.")))
+        
+        # get levels of candidate effect modifiers
+        P_levels <- P %>%
+          map(unique) %>%
+          map(na.omit)
+        
+        P <- as_tibble(P) %>%
+          mutate_all(as_factor)
+        
+        incProgress(0.25, detail = HTML(paste("Creating effect modifier matrix.")))
+        
+        # get names of multilevel categorical variables
+        mlP <- names(which(lengths(P_levels) > 2))
+        
+        # get names of binary character variables
+        cP <- P_levels %>%
+          map(as.numeric) %>%
+          map(is.na) %>%
+          map(all) %>%
+          as_vector()
+        
+        bcP <- names(which(cP[!(names(cP) %in% all_of(mlP))]))
+        
+        # create dummy indicators for mlP and cP
+        for (p in c(mlP, bcP)) {
+          mlP_form <- as.formula(paste0("~ -1 + ", p))
+          P <- P %>%
+            select(-all_of(p)) %>%
+            bind_cols(as.data.frame(model.matrix(mlP_form, model.frame(~ ., P, na.action=na.pass))))
+        }
+        
+        duplicate_bcP <- P_levels[bcP] %>%
+          map_chr(c(2)) %>%
+          paste0(bcP, .)
+        
         P <- P %>%
-          select(-all_of(p)) %>%
-          bind_cols(as.data.frame(model.matrix(mlP_form, model.frame(~ ., P, na.action=na.pass))))
-      }
-      
-      duplicate_bcP <- P_levels[bcP] %>%
-        map_chr(c(2)) %>%
-        paste0(bcP, .)
-      
-      P <- P %>%
-        select(-all_of(duplicate_bcP)) %>%
-        rename_with(~ gsub(" ", "_", .x))
-      
-      # create data frame of EM indicators for all 1 and 2-way interactions
-      P <- P %>%
-        mutate_if(is.factor, ~ as.numeric(.)-1)
-      
-      counter_P <- P %>%
-        mutate_all(~ case_when(.x == 1 ~ 0,
-                               .x == 0 ~ 1))
-      names(counter_P) <- paste0(names(counter_P), "_0")
-      
-      full_P <- P %>%
-        rename_with(~ paste0(.x, "_1")) %>%
-        cbind(., counter_P)
-      
-      ems <- as.data.frame(model.matrix(~ .^2 - 1, data=full_P))
-      
-      remove <- c(paste0(names(P), "_0"), paste0(names(P), "_1"),
-                  paste0(names(P), "_1:", names(P), "_0"),
-                  paste0(names(P), "_0:", names(P), "_1"))
-      
-      if (length(mlP) != 0) {
-        remove <- c(remove, names(full_P)[str_detect(names(full_P), paste(mlP, collapse="|"))])
-      }
-      
-      ems <- ems %>%
-        dplyr::select(-any_of(remove)) %>%
-        cbind(P, .)
-      
-      # check positivity: print prevalence of observations for each effect modifier interaction (and size)
-      cat("Checking positivity...\n")
-      tab1 <- tibble("Effect Modifier (Interaction)" = names(ems),
-                     "Prevalence" = paste0(round(apply(ems, 2, mean, na.rm=T)*100, 2), "%"),
-                     "In-Count" = apply(ems, 2, sum, na.rm=T),
-                     "Out-Count" = apply(ems, 2, function(x) sum(x==0, na.rm=T)))
-      
-      colnames(tab1)[2] <- paste0("Proportion in data (N=", nrow(ems), ")")
-      
-      # throw warning if less than 5% or more than 95% prevalence
-      if (any(tab1$`In-Count`/nrow(ems) < 0.05) | any(tab1$`Out-Count`/nrow(ems) < 0.05)) {
-        prob_em <- tab1 %>% 
-          filter(`In-Count`/nrow(ems) < 0.05 | `Out-Count`/nrow(ems) < 0.05) %>%
-          pull(`Effect Modifier (Interaction)`)
-        warning("The following interactions have less than 5% or more than 95% prevalence. Bootstrap results may be biased:")
-        print(prob_em)
-      }
+          select(-all_of(duplicate_bcP)) %>%
+          rename_with(~ gsub(" ", "_", .x))
+        
+        incProgress(0.25, detail = HTML(paste("Creating effect modifier matrix.")))
+        
+        # create data frame of EM indicators for all 1 and 2-way interactions
+        P <- P %>%
+          mutate_if(is.factor, ~ as.numeric(.)-1)
+        
+        counter_P <- P %>%
+          mutate_all(~ case_when(.x == 1 ~ 0,
+                                 .x == 0 ~ 1))
+        names(counter_P) <- paste0(names(counter_P), "_0")
+        
+        full_P <- P %>%
+          rename_with(~ paste0(.x, "_1")) %>%
+          cbind(., counter_P)
+        
+        ems <- as.data.frame(model.matrix(~ .^2 - 1, data=full_P))
+        
+        remove <- c(paste0(names(P), "_0"), paste0(names(P), "_1"),
+                    paste0(names(P), "_1:", names(P), "_0"),
+                    paste0(names(P), "_0:", names(P), "_1"))
+        
+        if (length(mlP) != 0) {
+          remove <- c(remove, names(full_P)[str_detect(names(full_P), paste(mlP, collapse="|"))])
+        }
+        
+        ems <- ems %>%
+          dplyr::select(-any_of(remove)) %>%
+          cbind(P, .)
+        
+        # check positivity: print prevalence of observations for each effect modifier interaction (and size)
+        incProgress(0.25, detail = HTML(paste("Checking positivity.")))
+        tab1 <- tibble("Effect Modifier (Interaction)" = names(ems),
+                       "Prevalence" = paste0(round(apply(ems, 2, mean, na.rm=T)*100, 2), "%"),
+                       "In-Count" = apply(ems, 2, sum, na.rm=T),
+                       "Out-Count" = apply(ems, 2, function(x) sum(x==0, na.rm=T)),
+                       "Sorter" = apply(ems, 2, mean, na.rm=T))
+        
+        colnames(tab1)[2] <- paste0("Proportion in data (N=", nrow(ems), ")")
+        
+        # throw warning if less than 5% or more than 95% prevalence
+        if (any(tab1$`In-Count`/nrow(ems) < 0.05) | any(tab1$`Out-Count`/nrow(ems) < 0.05)) {
+          prob_em <- tab1 %>% 
+            filter(`In-Count`/nrow(ems) < 0.05 | `Out-Count`/nrow(ems) < 0.05) %>%
+            pull(`Effect Modifier (Interaction)`)
+          warning("The following interactions have less than 5% or more than 95% prevalence. Bootstrap results may be biased:")
+          print(prob_em)
+        }
+        incProgress(0.25, detail = HTML(paste("Complete.")))
+      })
       
       store$y <- y
       store$z <- z
@@ -441,7 +460,18 @@ data_server <- function(id, store) {
       store$ems <- ems
     })
     
-    output$emprevalence_table <- DT::renderDataTable(DT::datatable(store$emprevalence_table, rownames=F, options=list(scrollX=TRUE, scrollY="200px")))
+    output$emprevalence_table <- DT::renderDataTable(DT::datatable(
+      store$emprevalence_table, 
+      rownames = F, 
+      options = list(
+        columnDefs = list(
+          list(orderData = 4, targets = 1),
+          list(visible = FALSE, targets = 4)
+        ),
+        scrollX = TRUE, 
+        scrollY="200px"
+      )
+    )) |> bindEvent(emprevalence_show(input$next_varverify, input$next_emprevalence))
     
     # move to bootstrap tab! (add warning before moving ahead to bootstrap)
     output$next_bootstrap <- renderUI({
@@ -452,7 +482,7 @@ data_server <- function(id, store) {
         icon("hand-pointer"),
         class = "btn-outline-primary"
       )
-    })
+    }) |> bindEvent(emprevalence_show(input$next_varverify, input$next_emprevalence))
     
     switch_page <- function() {
       ret_val <- reactiveValues(count=0)
