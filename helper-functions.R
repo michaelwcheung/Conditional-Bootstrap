@@ -1,7 +1,3 @@
-# button style
-button_style = "color: #fff; background-color: #337ab7; border-color: #2e6da4"
-button_style2 = "class: btn btn-outline-primary"
-
 # verify if variable is binary (numeric or text)
 check_binary <- function(column) {
   if (length(unique(na.omit(column))) == 2) {
