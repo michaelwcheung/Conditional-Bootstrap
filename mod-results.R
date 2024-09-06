@@ -83,6 +83,8 @@ results_server <- function(id, store) {
         
         em_quantile_table["Median Sorter"] <- abs(em_quantile_table["Median CATE"])
         em_quantile_table["Mean Sorter"] <- abs(em_quantile_table["Mean CATE"])
+        em_quantile_table["Lower 95% CI Sorter"] <- abs(em_quantile_table["Lower 95% CI"])
+        em_quantile_table["Upper 95% CI Sorter"] <- abs(em_quantile_table["Upper 95% CI"])
         
         # table of regression coefficients
         regression_coefficients_table <- statistics %>%
@@ -365,8 +367,9 @@ results_server <- function(id, store) {
         columnDefs = list(
           list(orderData = 6, targets = 2),
           list(orderData = 7, targets = 3),
-          list(visible = FALSE, targets = 6),
-          list(visible = FALSE, targets = 7)
+          list(orderData = 8, targets = 4),
+          list(orderData = 9, targets = 5),
+          list(visible = FALSE, targets = c(6, 7, 8, 9))
         ),
         scrollX = T, 
         scrollY = "200px"

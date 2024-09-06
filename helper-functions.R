@@ -168,3 +168,92 @@ generate_adj_X <- function(em, X, P) {
   
   return(adj_X)
 }
+
+# parallel processing
+option3a <- function() {
+  cl <- parallel::makeCluster(3, type = "FORK")
+  plan(cluster, workers = cl)
+  p <- progressor(along = names(ems))
+  packages_required <- c("stringr", "dplyr", "tidyverse", "WeightIt", "data.table", "shiny")
+  global_required <- c("data", "y", "z", "X", "P", "ems", "family", "quantiles", "B", "estimation_method", "test")
+  
+  results_list <- foreach(em = names(ems), .packages = packages_required, .export = global_required) %dopar% {
+    source("helper-functions.R")
+    adj_X <- generate_adj_X(em, X, P)
+    
+    results_item_bh_cates <- tibble(quantile=numeric(),
+                                    em=character(),
+                                    o_cate=numeric(),
+                                    o_cate_se=numeric())
+    
+    results_item_em_rejectT <- if (test == "PQ") character(0) else NULL
+    
+    # estimate observed CATEs if conducting bootstrap hypothesis test or prior Cochran's Q test
+    if (test == "BH" | test == "PQ") {
+      mod_cate0 <- glm(y ~ z + as.matrix(adj_X), family=family, subset=which(get(em, ems) == 0))
+      mod_cate100 <- glm(y ~ z + as.matrix(adj_X), family=family, subset=which(get(em, ems) == 1))
+      
+      if (test == "BH") {
+        
+        results_item_bh_cates <- tibble(
+          quantile = c(0,100),
+          em = em,
+          o_cate = c(mod_cate0$coefficients["z"], mod_cate100$coefficients["z"]),
+          o_cate_se = c(summary(mod_cate0)$coefficients["z", "Std. Error"],
+                        summary(mod_cate100)$coefficients["z", "Std. Error"]))
+        
+      } else if (test == "PQ") {
+        
+        PQ_rejectT <- cochrans_q_het(ate = ate,
+                                     cate0 = mod_cate0$coefficients["z"],
+                                     cate100 = mod_cate100$coefficients["z"],
+                                     se0 = summary(mod_cate0)$coefficients["z", "Std. Error"],
+                                     se100 = summary(mod_cate100)$coefficients["z", "Std. Error"],
+                                     estimand = estimand)[2] < alpha
+        
+        if (PQ_rejectT) {
+          results_item_em_rejectT <- c(results_item_em_rejectT, em)
+        } else {
+          next
+        }
+      }
+    }
+    
+    boot1 <- lapply(quantiles, function(q) {
+      boot2 <- lapply(rep(1, B), function(b) {
+        # bootstrap CATE data according to quantiles
+        inem <- which(get(em, ems) == 1)
+        outem <- which(get(em, ems) == 0)
+        ind_inem <- sample(inem, size = round(nrow(P) * q/100), replace = T)
+        ind_outem <- sample(outem, size = round(nrow(P) * (100-q)/100), replace = T)
+        cate_ind <- c(ind_inem, ind_outem)
+        
+        # create outcome model and add estimated CATE (and SE) to bootstrap storage structure
+        cate_estimate <- estimate_cate(data, y, z, adj_X, cate_ind, estimand, family, estimation_method, propensity)
+        cate <- cate_estimate[1]
+        cate_se <- cate_estimate[2]
+        
+        return(tibble(
+          quantile = q,
+          em = em,
+          cate = cate,
+          cate_se = cate_se))
+      })
+      return(rbindlist(boot2))
+    })
+    
+    # cancel
+    interruptor$execInterrupts()
+    
+    p(sprintf("em=%s", em))
+    progress$inc(1/length(names(ems)), detail = sprintf("em = %s", em))
+    
+    return(list(boots = rbindlist(boot1), 
+                bh_cates = results_item_bh_cates, 
+                em_rejectT = results_item_em_rejectT))
+  } # end foreach
+  
+  stopCluster(cl = cl)
+  
+  return(results_list)
+}

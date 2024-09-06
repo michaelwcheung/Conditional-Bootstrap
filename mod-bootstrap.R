@@ -114,14 +114,14 @@ bootstrap_server <- function(id, store) {
     result_val <- reactiveValues(
       ate = NULL,
       ate_confint = NULL,
-      boots = NULL,
-      bh_cates = NULL,
       statistics = NULL,
       em_rejectT = NULL
     )
     running <- reactiveVal(FALSE)
     
     observeEvent(input$bootstrap, {
+      store$startup <- Sys.time()
+      
       if (running())
         return(NULL)
       running(TRUE)
@@ -130,6 +130,10 @@ bootstrap_server <- function(id, store) {
       
       # result_val(NULL)
       
+      # reset store
+      store$statistics <- NULL
+      store$em_rejectT <- NULL
+       
       data <- store$data
       y <- store$y
       z <- store$z
@@ -142,26 +146,6 @@ bootstrap_server <- function(id, store) {
       test <- store$heterogeneity_test <- req(input$heterogeneity_test)
       estimation_method <- store$estimation_method <- req(input$estimation_method)
       alpha <- 0.05
-      
-      # reset store
-      store$boots <- NULL
-      if (test == "BH") store$bh_cates <- NULL
-      store$statistics <- NULL
-      store$em_rejectT <- NULL
-      
-      # # instantiate bootstrap storage structure
-      # boots <- tibble(quantile=numeric(),
-      #                 em=character(),
-      #                 cate=numeric(),
-      #                 cate_se=numeric())
-      # 
-      # # if conducting bootstrap hypothesis test, instantiate storage structure for observed CATEs
-      # if (test == "BH") {
-      #   bh_cates <- tibble(quantile = numeric(),
-      #                      em = character(),
-      #                      o_cate = numeric(),
-      #                      o_cate_se = numeric())
-      # }
       
       # set regression model family based on desired estimand
       if (estimand == "or") {
@@ -179,7 +163,8 @@ bootstrap_server <- function(id, store) {
         propensity <- rep(1, length(z))
       } else {}
       
-      fut <- future({
+      store$start_future <- Sys.time()
+      fut <- future_promise({ # try future_promise for multi-user 
         progress$inc(0, detail = "Computing ATE.")
         
         # instantiate bootstrap storage structure
@@ -200,6 +185,9 @@ bootstrap_server <- function(id, store) {
         ate <- ate_estimate[1]
         ate_confint <- ate_estimate[2:3]
         
+        # cancel
+        interruptor$execInterrupts()
+        
         # main computation
         # initialize counters and time storage vectors
         init <- numeric()
@@ -214,27 +202,28 @@ bootstrap_server <- function(id, store) {
         if (test == "PQ") em_rejectT <- character(0)
         
         progress$inc(0, detail = "Starting bootstrap.")
-        
-        # conditional bootstrap
+
+        # p <- progressr::progressor(along = names(ems))
+        # parallelism
         for (em in names(ems)) {
-          em_counter <- em_counter + 1 # counter for em
-          q_counter <- 0 # counter for quantile
-          adj_X <- generate_adj_X(em, X, P) # create matrix of confounders and effect modifiers that don't belong to current em
+          em_counter <- em_counter + 1
+          q_counter <- 0
+          
+          adj_X <- generate_adj_X(em, X, P)
           
           # estimate observed CATEs if conducting bootstrap hypothesis test or prior Cochran's Q test
           if (test == "BH" | test == "PQ") {
-            
             mod_cate0 <- glm(y ~ z + as.matrix(adj_X), family=family, subset=which(get(em, ems) == 0))
             mod_cate100 <- glm(y ~ z + as.matrix(adj_X), family=family, subset=which(get(em, ems) == 1))
             
             if (test == "BH") {
               
-              bh_cates <- bh_cates %>%
-                add_row(quantile = c(0,100),
-                        em = em,
-                        o_cate = c(mod_cate0$coefficients["z"], mod_cate100$coefficients["z"]),
-                        o_cate_se = c(summary(mod_cate0)$coefficients["z", "Std. Error"],
-                                      summary(mod_cate100)$coefficients["z", "Std. Error"]))
+              bh_cates <- bh_cates %>% add_row(
+                quantile = c(0,100),
+                em = em,
+                o_cate = c(mod_cate0$coefficients["z"], mod_cate100$coefficients["z"]),
+                o_cate_se = c(summary(mod_cate0)$coefficients["z", "Std. Error"],
+                              summary(mod_cate100)$coefficients["z", "Std. Error"]))
               
             } else if (test == "PQ") {
               
@@ -258,57 +247,53 @@ bootstrap_server <- function(id, store) {
             
             for (b in 1:B) {
               b_counter <- b_counter + 1
-              
-              # time before bootstrap
               init <- c(init, Sys.time())
-              
               # bootstrap CATE data according to quantiles
               inem <- which(get(em, ems) == 1)
               outem <- which(get(em, ems) == 0)
-              ind_inem <- sample(inem, size=round(nrow(P)*q/100), replace=T)
-              ind_outem <- sample(outem, size=round(nrow(P)*(100-q)/100), replace=T)
+              ind_inem <- sample(inem, size = round(nrow(P) * q/100), replace = T)
+              ind_outem <- sample(outem, size = round(nrow(P) * (100-q)/100), replace = T)
               cate_ind <- c(ind_inem, ind_outem)
               
               # create outcome model and add estimated CATE (and SE) to bootstrap storage structure
-              # mod <- glm(y ~ z + as.matrix(adj_X), family=family, subset=cate_ind)
               cate_estimate <- estimate_cate(data, y, z, adj_X, cate_ind, estimand, family, estimation_method, propensity)
+              cate <- cate_estimate[1]
+              cate_se <- cate_estimate[2]
               
-              boots <- boots %>% add_row(quantile = q,
-                                         em = em,
-                                         cate = cate_estimate[1],
-                                         cate_se = cate_estimate[2])
+              boots <- boots %>% add_row(
+                quantile = q,
+                em = em,
+                cate = cate_estimate[1],
+                cate_se = cate_estimate[2]
+              )
               
-              # time after bootstrap
               end <- c(end, Sys.time())
               
-              # estimated remaining time
               time <- round(seconds_to_period(sum(end - init)), 0)
               est <- n_iter*(mean(end[end != 0] - init[init != 0])) - time
               remaining <- round(seconds_to_period(est), 0)
               
               percent <- b_counter/n_iter * 100
               
-              cat(paste0(sprintf('\r[%-50s] %d%%',
-                                 paste(rep('=', percent / 2), collapse = ''),
-                                 floor(percent)),
-                         " | Effect Modifier:", em_counter, "/", n_ems,
-                         " | Quantile:", q_counter, "/", n_quantiles,
-                         " | Bootstrap: ", b, "/", B, "     "))
+              # p(message = sprintf("em: %s | quantile: %d | bootstrap : %d", em, q, b))
               
+              # cancel
+              interruptor$execInterrupts()
+              
+              # update
               progress$inc(1/n_iter, detail = HTML(paste(
                 floor(percent), "%",
                 " | Execution Time: ", time,
                 " | Estimated Time Remaining: ", remaining,
-                " | Effect Modifier: ", em_counter, "/", n_ems,
-                " | Quantile: ", q_counter, "/", n_quantiles,
-                " | Bootstrap: ", b, "/", B
+                "Effect Modifier: ", em_counter, "/", n_ems,
+                "Quantile: ", q_counter, "/", n_quantiles,
+                "Bootstrap: ", b, "/", B
               )))
-              
-              # cancel
-              interruptor$execInterrupts()
             }
           }
-        } # bootstrap done
+        }
+        
+        progress$inc(1, detail = "Bootstrap complete.")
         
         # calculate means/medians, bootstrap confidence intervals
         if (estimand == "or" | estimand == "rr") {
@@ -384,26 +369,42 @@ bootstrap_server <- function(id, store) {
             unique()
 
         } else {}
-
-        # # add everything to store
-        # store$boots <- boots
-        # if (test == "BH") store$bh_cates <- bh_cates
-        # store$statistics <- statistics
-        # store$em_rejectT <- em_rejectT
+        
         result <- list(
           ate = ate,
           ate_confint = ate_confint,
-          boots = boots,
-          bh_cates = bh_cates,
           statistics = statistics,
           em_rejectT = em_rejectT
         )
+        
         return(result)
-      }) %...>% (function(result) {
+      }, globals = list(
+        data = data,
+        y = y,
+        z = z, 
+        X = X,
+        P = P,
+        ems = ems,
+        family = family,
+        quantiles = quantiles,
+        B = B,
+        estimation_method = estimation_method,
+        test = test,
+        propensity = propensity,
+        estimand = estimand,
+        alpha = alpha,
+        progress = progress,
+        estimate_ate = estimate_ate,
+        estimate_cate = estimate_cate,
+        generate_adj_X = generate_adj_X,
+        cochrans_q_het = cochrans_q_het,
+        bse = bse,
+        # option4a = option4a,
+        interruptor = interruptor,
+        p = p
+      ), packages = c("lmtest", "sandwich", "boot", "WeightIt", "data.table", "future", "foreach", "promises", "progressr", "parallel", "stringr", "dplyr", "tidyverse", "shiny", "future.apply")) %...>% (function(result) {
         result_val$ate <- result$ate
         result_val$ate_confint <- result$ate_confint
-        result_val$boots <- result$boots
-        result_val$bh_cates <- result$bh_cates
         result_val$statistics <- result$statistics
         result_val$em_rejectT <- result$em_rejectT
       })
@@ -413,8 +414,6 @@ bootstrap_server <- function(id, store) {
                    function(e) {
                      result_val$ate <- NULL
                      result_val$ate_confint <- NULL
-                     result_val$boots <- NULL
-                     result_val$bh_cates <- NULL
                      result_val$statistics <- NULL
                      result_val$em_rejectT <- NULL
                      print(e$message)
@@ -437,10 +436,11 @@ bootstrap_server <- function(id, store) {
     observeEvent(result_val$statistics, {
       store$ate <- result_val$ate
       store$ate_confint <- result_val$ate_confint
-      store$boots <- result_val$boots
-      if (test == "BH") store$bh_cates <- result_val$bh_cates
       store$statistics <- result_val$statistics
       store$em_rejectT <- result_val$em_rejectT
+      end_bootstrap <- Sys.time()
+      print(store$start_future - store$startup)
+      print(end_bootstrap - store$start_future)
       print("added everything to store!")
     })
     

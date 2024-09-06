@@ -471,11 +471,35 @@ data_server <- function(id, store) {
         scrollX = TRUE, 
         scrollY="200px"
       )
+    ) %>% DT::formatStyle(
+      columns = 1:ncol(store$emprevalence_table),
+      target = "cell",
+      color = JS("\"unset\""),
+      backgroundColor = JS("\"unset\"")
+    ) %>% DT::formatStyle(
+      2,
+      valueColumns = 5,
+      target = "row",
+      backgroundColor = styleInterval(c(0.05, 0.95), c("#f8d4d5", "white", "#f8d4d5"))
     )) |> bindEvent(emprevalence_show(input$next_varverify, input$next_emprevalence))
     
     # move to bootstrap tab! (add warning before moving ahead to bootstrap)
     output$next_bootstrap <- renderUI({
       if (is.null(store$ems)) return()
+      if ((any(store$emprevalence_table$`In-Count`/nrow(store$ems) < 0.05) | any(store$emprevalence_table$`Out-Count`/nrow(store$ems) < 0.05))) {
+        return(tagList(
+          br(),
+          HTML("The interactions in <span style=\"background-color: #f8d4d5;\">red</span> have less than 5% or more than 95% prevalence. Bootstrap results may be biased."),
+          br(),
+          br(),
+          actionButton(
+            session$ns("next_bootstrap"),
+            " Next: Set Bootstrap Parameters",
+            icon("hand-pointer"),
+            class = "btn-outline-primary"
+          )
+        ))
+      }
       actionButton(
         session$ns("next_bootstrap"),
         " Next: Set Bootstrap Parameters",
