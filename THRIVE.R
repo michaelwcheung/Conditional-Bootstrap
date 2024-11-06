@@ -8,7 +8,23 @@ library(lmtest)
 library(pals) # color palette for plot
 library(geomtextpath) # label for ATE on plot
 library(lubridate) # time for progress bar
+library(DT)
+library(boot)
+library(plotly)
+library(promises)
+library(future)
+library(foreach)
+library(doFuture)
+library(progressr)
+library(data.table)
+library(parallel)
+library(future.apply)
+library(stringr)
+library(dplyr)
+
 source("helper-functions.R")
+
+options(future.globals.maxSize = 8000*1024^2)
 
 #   Plot displays median cate values
 #   Currently only works for categorical effect modifiers 
@@ -25,6 +41,7 @@ source("helper-functions.R")
 ## estimation method: "lr" for adjusted linear regression, "iptw" for inverse probability of treatment weighting, "dr" for doubly robust estimation
 ## test: Test to assess heterogeneity; "Q" for Cochran's Q (default), "PQ" for Cochran's Q test prior to bootstrapping, "BH" for bootstrap hypothesis test, "CI" for checking overlap of confidence intervals with ATE
 ## alpha: type-1 error level with which heterogeneity test p-value is compared (applicable for Q and BH)
+## cores: number of cores to use (1: sequential, 2+: parallel, max at detectCores() - 1)
 
 # Removed for now:
 ## show_bootd: Option to overlay bootstrap CATE densities on plot; "one" for example overlay of one EM, "all" for all EMs, "none" for no EMs
@@ -36,12 +53,16 @@ thrive <- function(y, z, X, P, data,
                    estimand = "rd",
                    estimation_method = "lr",
                    test = "Q",
-                   alpha = 0.05) {
+                   alpha = 0.05,
+                   cores = 1) {
                    # show_bootd = "none", 
                    # show_bootci = "none")
 
     # check that quantiles includes 0 and 100, if it doesn't throw error
     if (any(!(c(0,100) %in% quantiles))) stop("0 and/or 100 are not included in vector of quantiles")
+  
+    # check that cores does not exceed detectCores() - 1
+    if (cores > (detectCores() - 1)) stop(sprintf("cores = %s is greater than the total number of cores available on your machine - 1 = %s. Please enter a cores value no greater than %s.", cores, detectCores()-1, detectCores()-1))
     
     # if candidate effect modifiers are unnamed, assign names
     if (sum(is.na(colnames(P))) != 0){
@@ -128,19 +149,19 @@ thrive <- function(y, z, X, P, data,
         print(prob_em)
     }
     
-    # instantiate bootstrap storage structure
-    boots <- tibble(quantile = numeric(),
-                    em = character(),
-                    cate = numeric(),
-                    cate_se = numeric())
+    # instantiate bootstrap storage structure (done inside bootstrap)
+    # boots <- tibble(quantile = numeric(),
+    #                 em = character(),
+    #                 cate = numeric(),
+    #                 cate_se = numeric())
     
-    # if conducting bootstrap hypothesis test, instantiate storage structure for observed CATEs
-    if (test == "BH") {
-        bh_cates <- tibble(quantile = numeric(),
-                           em = character(),
-                           o_cate = numeric(),
-                           o_cate_se = numeric())
-    }
+    # if conducting bootstrap hypothesis test, instantiate storage structure for observed CATEs (done inside bootstrap)
+    # if (test == "BH") {
+    #     bh_cates <- tibble(quantile = numeric(),
+    #                        em = character(),
+    #                        o_cate = numeric(),
+    #                        o_cate_se = numeric())
+    # }
     
     # set regression model family based on desired estimand
     if (estimand == "or") {
@@ -158,195 +179,393 @@ thrive <- function(y, z, X, P, data,
         propensity <- rep(1, length(z))
     } else {}
     
-    # compute full data ATE
-    ate_estimate <- estimate_ate(data, y, z, X, estimand, family, estimation_method, propensity)
-    ate <- ate_estimate[1]
-    ate_confint <- ate_estimate[2:3]
+    ##### PARALLEL BOOTSTRAP #####
     
-    # initialize counters and time storage vectors
-    init <- numeric()
-    end <- numeric()
-    em_counter <- 0
-    b_counter <- 0
-    n_ems <- ncol(ems)
-    n_quantiles <- length(quantiles)
-    n_iter <- n_ems*n_quantiles*B
-    
-    # if performing Cochran's Q test before bootstrapping, create list of effect modifiers
-    if (test == "PQ") em_rejectT <- character(0)
-    
-    # conditional bootstrap
-    cat("\n\nPerforming conditional boostrap:\n")
-    
-    for (em in names(ems)) {
+    boot_flll_inside <- function() {
+      handlers(global = TRUE)
+      handlers("cli")
+      plan(multisession, workers = cores)
+      options(future.globals.maxSize = 8000*1024^2)
+      registerDoFuture()
+      
+      # compute ate
+      print("Computing ATE.")
+      ate_estimate <- estimate_ate(data, y, z, X, estimand, family, estimation_method, propensity)
+      ate <- ate_estimate[1]
+      ate_confint <- ate_estimate[2:3]
+      print("Starting bootstrap.")
+      
+      # main computation
+      n_ems <- ncol(ems)
+      n_quantiles <- length(quantiles)
+      n_iter <- n_ems * n_quantiles * B
+      
+      p <- progressr::progressor(along = 1:n_iter)
+      
+      lll_result <- future_lapply(names(ems), function(em) {
         
-        # counter for em
-        em_counter <- em_counter + 1
-        
-        # set quantile counter 
-        q_counter <- 0 
-        
-        # create matrix of confounders and effect modifiers that don't belong to current em
         adj_X <- generate_adj_X(em, X, P)
+        
+        results_item_em_rejectT <- if (test == "PQ") character(0) else NULL
         
         # estimate observed CATEs if conducting bootstrap hypothesis test or prior Cochran's Q test
         if (test == "BH" | test == "PQ") {
+          mod_cate0 <- glm(y ~ z + as.matrix(adj_X), family=family, subset=which(get(em, ems) == 0))
+          mod_cate100 <- glm(y ~ z + as.matrix(adj_X), family=family, subset=which(get(em, ems) == 1))
+          
+          if (test == "BH") {
             
-            mod_cate0 <- glm(y ~ z + as.matrix(adj_X), family = family, subset = which(get(em, ems) == 0))
-            mod_cate100 <- glm(y ~ z + as.matrix(adj_X), family = family, subset = which(get(em, ems) == 1))
+            results_item_bh_cates <- tibble(
+              quantile = c(0,100),
+              em = em,
+              o_cate = c(mod_cate0$coefficients["z"], mod_cate100$coefficients["z"]),
+              o_cate_se = c(summary(mod_cate0)$coefficients["z", "Std. Error"],
+                            summary(mod_cate100)$coefficients["z", "Std. Error"]))
             
-            if (test == "BH") {
-                
-                bh_cates <- bh_cates %>% 
-                    add_row(quantile = c(0,100),
-                            em = em,
-                            o_cate = c(mod_cate0$coefficients["z"], mod_cate100$coefficients["z"]),
-                            o_cate_se = c(summary(mod_cate0)$coefficients["z", "Std. Error"],
-                                          summary(mod_cate100)$coefficients["z", "Std. Error"]))
-            } else if (test == "PQ") {
-                
-                PQ_rejectT <- cochrans_q_het(ate = ate,
-                                             cate0 = mod_cate0$coefficients["z"],
-                                             cate100 = mod_cate100$coefficients["z"],
-                                             se0 = summary(mod_cate0)$coefficients["z", "Std. Error"],
-                                             se100 = summary(mod_cate100)$coefficients["z", "Std. Error"],
-                                             estimand = estimand)[2] < alpha
-                
-                if (PQ_rejectT) {
-                    em_rejectT <- c(em_rejectT, em)
-                } else {
-                    next
-                }
-            }    
+          } else if (test == "PQ") {
             
+            PQ_rejectT <- cochrans_q_het(ate = ate,
+                                         cate0 = mod_cate0$coefficients["z"],
+                                         cate100 = mod_cate100$coefficients["z"],
+                                         se0 = summary(mod_cate0)$coefficients["z", "Std. Error"],
+                                         se100 = summary(mod_cate100)$coefficients["z", "Std. Error"],
+                                         estimand = estimand)[2] < alpha
+            
+            if (PQ_rejectT) {
+              results_item_em_rejectT <- c(results_item_em_rejectT, em)
+            } else {
+              next
+            }
+          }
         }
         
-        for (q in quantiles) {
+        boot1 <- lapply(quantiles, function(q) {
+          boot2 <- lapply(1:B, function(b) {
+            # bootstrap CATE data according to quantiles
+            inem <- which(get(em, ems) == 1)
+            outem <- which(get(em, ems) == 0)
+            ind_inem <- sample(inem, size = round(nrow(P) * q/100), replace = T)
+            ind_outem <- sample(outem, size = round(nrow(P) * (100-q)/100), replace = T)
+            cate_ind <- c(ind_inem, ind_outem)
             
-            # counter for quantile
-            q_counter <- q_counter + 1
+            # create outcome model and add estimated CATE (and SE) to bootstrap storage structure
+            cate_estimate <- estimate_cate(data, y, z, adj_X, cate_ind, estimand, family, estimation_method, propensity)
+            cate <- cate_estimate[1]
+            cate_se <- cate_estimate[2]
             
-            for (b in 1:B) {
-                
-                # counter for bootstrap
-                b_counter <- b_counter + 1
-                
-                # get time before bootstrap
-                init <- c(init, Sys.time())
-                
-                # bootstrap CATE data according to quantiles
-                inem <- which(get(em, ems) == 1)
-                outem <- which(get(em, ems) == 0)
-                ind_inem <- sample(inem, size=round(nrow(P)*q/100), replace=T)
-                ind_outem <- sample(outem, size=round(nrow(P)*(100-q)/100), replace=T)
-                cate_ind <- c(ind_inem, ind_outem)
-                
-                # create outcome model and add estimated CATE (and SE) to bootstrap storage structure
-                cate_estimate <- estimate_cate(data, y, z, adj_X, cate_ind, estimand, family, estimation_method, propensity)
-                
-                boots <- boots %>% add_row(quantile = q,
-                                           em = em, 
-                                           cate = cate_estimate[1],
-                                           cate_se = cate_estimate[2])
-                
-                # get time after bootstrap
-                end <- c(end, Sys.time())
-                
-                # estimated remaining time (average time it took to run other iterations)
-                time <- round(seconds_to_period(sum(end - init)), 0)
-                est <- n_iter*(mean(end[end != 0] - init[init != 0])) - time
-                remaining <- round(seconds_to_period(est), 0)
-                
-                percent <- b_counter/n_iter * 100
-                
-                # print progress
-                cat(paste0(sprintf('\r[%-50s] %d%%',
-                                   paste(rep('=', percent / 2), collapse = ''),
-                                   floor(percent)),
-                           " | Execution time:", time,
-                           " | Estimated time remaining:", remaining,
-                           " | Effect Modifier:", em_counter, "/", n_ems,
-                           " | Quantile:", q_counter, "/", n_quantiles,
-                           " | Bootstrap: ", b, "/", B, "     "))
-            }
-        }
-    }
-    
-    cat("\n\n Conditional bootstrap complete.")
-    
-    # calculate means/medians, bootstrap confidence intervals
-    if (estimand == "or" | estimand == "rr") {
+            p(message = sprintf("em: %s | quantile: %d | bootstrap : %d", em, q, b))
+            
+            return(tibble(
+              quantile = q,
+              em = em,
+              cate = cate,
+              cate_se = cate_se))
+          })
+          return(rbindlist(boot2))
+        })
+        
+        return(list(boots = rbindlist(boot1),
+                    bh_cates = if(test == "BH") results_item_bh_cates else NULL,
+                    em_rejectT = results_item_em_rejectT))
+      }, future.chunk.size = 1, future.seed = TRUE)
+      
+      boots <- rbindlist(lapply(lll_result, function(x) x$boots))
+      bh_cates <- rbindlist(lapply(lll_result, function(x) x$bh_cates))
+      em_rejectT <- lapply(lll_result, function(x) x$em_rejectT)
+      
+      # calculate means/medians, bootstrap confidence intervals
+      if (estimand == "or" | estimand == "rr") {
         statistics <- boots %>%
-            group_by(quantile, em) %>%
-            summarise(mean_cate = mean(exp(cate)),
-                      median_cate = median(exp(cate)),
-                      cate_LP_se = bse(cate),
-                      cate_ci_lwr = quantile(exp(cate), probs = 0.025),
-                      cate_ci_upr = quantile(exp(cate), probs = 0.975))
-    } else if (estimand == "rd") {
+          group_by(quantile, em) %>%
+          summarise(mean_cate = mean(exp(cate)),
+                    median_cate = median(exp(cate)),
+                    cate_lp_se = bse(cate),
+                    cate_ci_lwr = quantile(exp(cate), probs = 0.025),
+                    cate_ci_upr = quantile(exp(cate), probs = 0.975))
+      } else if (estimand == "rd") {
         statistics <- boots %>%
-            group_by(quantile, em) %>%
-            summarise(mean_cate = mean(cate),
-                      median_cate = median(cate),
-                      cate_LP_se = bse(cate),
-                      cate_ci_lwr = quantile(cate, probs = 0.025),
-                      cate_ci_upr = quantile(cate, probs = 0.975))
-    } else {}
-    
-    statistics <- statistics %>%
+          group_by(quantile, em) %>%
+          summarise(mean_cate = mean(cate),
+                    median_cate = median(cate),
+                    cate_lp_se = bse(cate),
+                    cate_ci_lwr = quantile(cate, probs = 0.025),
+                    cate_ci_upr = quantile(cate, probs = 0.975))
+      } else {}
+      
+      # make CATEs solid colors on plot if they are outside the ATE 95% CI
+      statistics <- statistics %>%
         mutate(cate_visible = case_when(median_cate > ate_confint[2] ~ T,
                                         median_cate < ate_confint[1] ~ T,
                                         T ~ F))
-    
-    # conduct heterogeneity test
-    ## check for overlapping of CIs
-    if (test == "CI") {
+      
+      # conduct heterogeneity test
+      ## check for overlapping of CIs
+      if (test == "CI") {
         
         ### candidates reject null hypothesis of homogeneity if at least one of the 0 or 100 quantile CIs do not overlap with the ATE CI
         em_rejectT <- statistics %>%
-            filter(quantile == 0 | quantile == 100) %>%
-            mutate(cate_ci_rejectT = case_when(cate_ci_lwr > ate_confint[2] ~ T,
-                                               cate_ci_upr < ate_confint[1] ~ T,
-                                               T ~ F)) %>%
-            filter(cate_ci_rejectT == T) %>%
-            pull(em) %>%
-            unique()
+          filter(quantile == 0 | quantile == 100) %>%
+          mutate(cate_ci_rejectT = case_when(cate_ci_lwr > ate_confint[2] ~ T,
+                                             cate_ci_upr < ate_confint[1] ~ T,
+                                             T ~ F)) %>%
+          filter(cate_ci_rejectT == T) %>%
+          pull(em) %>%
+          unique()
         
         # conduct Cochran's Q test
-    } else if (test == "Q") {
+      } else if (test == "Q") {
         
-        em_rejectT <- statistics %>% 
-            filter(quantile == 0 | quantile == 100) %>%
-            group_by(em) %>%
-            arrange(quantile) %>%
-            summarise(Q_rejectT = cochrans_q_het(ate = ate,
-                                                 cate0 = first(mean_cate),
-                                                 cate100 = last(mean_cate),
-                                                 se0 = first(cate_LP_se),
-                                                 se100 = last(cate_LP_se),
-                                                 estimand = estimand)[2] < alpha) %>%
-            filter(Q_rejectT == T) %>%
-            pull(em)
+        em_rejectT <- statistics %>%
+          group_by(em) %>%
+          filter(quantile == min(quantiles) | quantile == max(quantiles)) %>%
+          arrange(quantile) %>%
+          summarise(Q_rejectT = cochrans_q_het(ate = ate,
+                                               cate0 = first(mean_cate),
+                                               cate100 = last(mean_cate),
+                                               se0 = first(cate_lp_se),
+                                               se100 = last(cate_lp_se),
+                                               estimand = estimand)[2] < alpha) %>%
+          filter(Q_rejectT == T) %>%
+          pull(em)
         
-    # conduct bootstrap hypothesis one-sample test
-    } else if (test == "BH") {
+        # conduct bootstrap hypothesis one-sample test
+      } else if (test == "BH") {
         
         bh_cates <- bh_cates %>%
-            mutate(t = case_when(family == "gaussian" ~ (o_cate-ate)/o_cate_se,
-                                 family == "binomial" | family == "poisson" ~ (o_cate-log(ate))/o_cate_se))
+          mutate(t = case_when(family == "gaussian" ~ (o_cate-ate)/o_cate_se,
+                               family == "binomial" ~ (o_cate-log(ate))/o_cate_se))
         
         em_rejectT <- boots %>%
-            left_join(., bh_cates) %>%
-            filter(quantile == 0 | quantile == 100) %>%
-            mutate(boot_t = (cate-o_cate)/cate_se) %>%
-            group_by(quantile, em) %>%
-            summarise(bh_reject_pval = mean(abs(boot_t) > abs(t))) %>%
-            mutate(bh_rejectT = bh_reject_pval < alpha) %>%
-            filter(bh_rejectT == T) %>%
-            pull(em) %>%
-            unique()
+          left_join(., bh_cates) %>%
+          filter(quantile == 0 | quantile == 100) %>%
+          mutate(boot_t = (cate-o_cate)/cate_se) %>%
+          group_by(quantile, em) %>%
+          summarise(bh_reject_pval = mean(abs(boot_t) > abs(t))) %>%
+          mutate(bh_rejectT = bh_reject_pval < alpha) %>%
+          filter(bh_rejectT == T) %>%
+          pull(em) %>%
+          unique()
         
-    } else {}
+      } else {}
+      
+      result <- list(
+        ate = ate,
+        ate_confint = ate_confint,
+        statistics = statistics,
+        em_rejectT = em_rejectT,
+        boots = boots
+      )
+      
+      return(result)
+    }
+    
+    preboot <- Sys.time()
+    dump <- boot_flll_inside()
+    postboot <- Sys.time()
+    diffboot <- postboot - preboot
+    print(sprintf("Finished in %s %s.",diffboot[[1]], units(diffboot)))
+    
+    plan(sequential) # back to sequential processing 
+    ate <- dump[1]$ate
+    ate_confint <- dump[2]$ate_confint
+    statistics <- dump[3]$statistics
+    em_rejectT <- dump[4]$em_rejectT
+    boots <- dump[5]$boots
+    
+    ##### END OF PARALLEL BOOTSTRAP #####
+    
+    ##### OG BOOTSTRAP #####
+    # # compute full data ATE
+    # ate_estimate <- estimate_ate(data, y, z, X, estimand, family, estimation_method, propensity)
+    # ate <- ate_estimate[1]
+    # ate_confint <- ate_estimate[2:3]
+    # 
+    # # initialize counters and time storage vectors
+    # init <- numeric()
+    # end <- numeric()
+    # em_counter <- 0
+    # b_counter <- 0
+    # n_ems <- ncol(ems)
+    # n_quantiles <- length(quantiles)
+    # n_iter <- n_ems*n_quantiles*B
+    # 
+    # # if performing Cochran's Q test before bootstrapping, create list of effect modifiers
+    # if (test == "PQ") em_rejectT <- character(0)
+    # 
+    # # conditional bootstrap
+    # cat("\n\nPerforming conditional boostrap:\n")
+    # 
+    # for (em in names(ems)) {
+    #     
+    #     # counter for em
+    #     em_counter <- em_counter + 1
+    #     
+    #     # set quantile counter 
+    #     q_counter <- 0 
+    #     
+    #     # create matrix of confounders and effect modifiers that don't belong to current em
+    #     adj_X <- generate_adj_X(em, X, P)
+    #     
+    #     # estimate observed CATEs if conducting bootstrap hypothesis test or prior Cochran's Q test
+    #     if (test == "BH" | test == "PQ") {
+    #         
+    #         mod_cate0 <- glm(y ~ z + as.matrix(adj_X), family = family, subset = which(get(em, ems) == 0))
+    #         mod_cate100 <- glm(y ~ z + as.matrix(adj_X), family = family, subset = which(get(em, ems) == 1))
+    #         
+    #         if (test == "BH") {
+    #             
+    #             bh_cates <- bh_cates %>% 
+    #                 add_row(quantile = c(0,100),
+    #                         em = em,
+    #                         o_cate = c(mod_cate0$coefficients["z"], mod_cate100$coefficients["z"]),
+    #                         o_cate_se = c(summary(mod_cate0)$coefficients["z", "Std. Error"],
+    #                                       summary(mod_cate100)$coefficients["z", "Std. Error"]))
+    #         } else if (test == "PQ") {
+    #             
+    #             PQ_rejectT <- cochrans_q_het(ate = ate,
+    #                                          cate0 = mod_cate0$coefficients["z"],
+    #                                          cate100 = mod_cate100$coefficients["z"],
+    #                                          se0 = summary(mod_cate0)$coefficients["z", "Std. Error"],
+    #                                          se100 = summary(mod_cate100)$coefficients["z", "Std. Error"],
+    #                                          estimand = estimand)[2] < alpha
+    #             
+    #             if (PQ_rejectT) {
+    #                 em_rejectT <- c(em_rejectT, em)
+    #             } else {
+    #                 next
+    #             }
+    #         }    
+    #         
+    #     }
+    #     
+    #     for (q in quantiles) {
+    #         
+    #         # counter for quantile
+    #         q_counter <- q_counter + 1
+    #         
+    #         for (b in 1:B) {
+    #             
+    #             # counter for bootstrap
+    #             b_counter <- b_counter + 1
+    #             
+    #             # get time before bootstrap
+    #             init <- c(init, Sys.time())
+    #             
+    #             # bootstrap CATE data according to quantiles
+    #             inem <- which(get(em, ems) == 1)
+    #             outem <- which(get(em, ems) == 0)
+    #             ind_inem <- sample(inem, size=round(nrow(P)*q/100), replace=T)
+    #             ind_outem <- sample(outem, size=round(nrow(P)*(100-q)/100), replace=T)
+    #             cate_ind <- c(ind_inem, ind_outem)
+    #             
+    #             # create outcome model and add estimated CATE (and SE) to bootstrap storage structure
+    #             cate_estimate <- estimate_cate(data, y, z, adj_X, cate_ind, estimand, family, estimation_method, propensity)
+    #             
+    #             boots <- boots %>% add_row(quantile = q,
+    #                                        em = em, 
+    #                                        cate = cate_estimate[1],
+    #                                        cate_se = cate_estimate[2])
+    #             
+    #             # get time after bootstrap
+    #             end <- c(end, Sys.time())
+    #             
+    #             # estimated remaining time (average time it took to run other iterations)
+    #             time <- round(seconds_to_period(sum(end - init)), 0)
+    #             est <- n_iter*(mean(end[end != 0] - init[init != 0])) - time
+    #             remaining <- round(seconds_to_period(est), 0)
+    #             
+    #             percent <- b_counter/n_iter * 100
+    #             
+    #             # print progress
+    #             cat(paste0(sprintf('\r[%-50s] %d%%',
+    #                                paste(rep('=', percent / 2), collapse = ''),
+    #                                floor(percent)),
+    #                        " | Execution time:", time,
+    #                        " | Estimated time remaining:", remaining,
+    #                        " | Effect Modifier:", em_counter, "/", n_ems,
+    #                        " | Quantile:", q_counter, "/", n_quantiles,
+    #                        " | Bootstrap: ", b, "/", B, "     "))
+    #         }
+    #     }
+    # }
+    # 
+    # cat("\n\n Conditional bootstrap complete.")
+    # 
+    # # calculate means/medians, bootstrap confidence intervals
+    # if (estimand == "or" | estimand == "rr") {
+    #     statistics <- boots %>%
+    #         group_by(quantile, em) %>%
+    #         summarise(mean_cate = mean(exp(cate)),
+    #                   median_cate = median(exp(cate)),
+    #                   cate_LP_se = bse(cate),
+    #                   cate_ci_lwr = quantile(exp(cate), probs = 0.025),
+    #                   cate_ci_upr = quantile(exp(cate), probs = 0.975))
+    # } else if (estimand == "rd") {
+    #     statistics <- boots %>%
+    #         group_by(quantile, em) %>%
+    #         summarise(mean_cate = mean(cate),
+    #                   median_cate = median(cate),
+    #                   cate_LP_se = bse(cate),
+    #                   cate_ci_lwr = quantile(cate, probs = 0.025),
+    #                   cate_ci_upr = quantile(cate, probs = 0.975))
+    # } else {}
+    # 
+    # statistics <- statistics %>%
+    #     mutate(cate_visible = case_when(median_cate > ate_confint[2] ~ T,
+    #                                     median_cate < ate_confint[1] ~ T,
+    #                                     T ~ F))
+    # 
+    # # conduct heterogeneity test
+    # ## check for overlapping of CIs
+    # if (test == "CI") {
+    #     
+    #     ### candidates reject null hypothesis of homogeneity if at least one of the 0 or 100 quantile CIs do not overlap with the ATE CI
+    #     em_rejectT <- statistics %>%
+    #         filter(quantile == 0 | quantile == 100) %>%
+    #         mutate(cate_ci_rejectT = case_when(cate_ci_lwr > ate_confint[2] ~ T,
+    #                                            cate_ci_upr < ate_confint[1] ~ T,
+    #                                            T ~ F)) %>%
+    #         filter(cate_ci_rejectT == T) %>%
+    #         pull(em) %>%
+    #         unique()
+    #     
+    #     # conduct Cochran's Q test
+    # } else if (test == "Q") {
+    #     
+    #     em_rejectT <- statistics %>% 
+    #         filter(quantile == 0 | quantile == 100) %>%
+    #         group_by(em) %>%
+    #         arrange(quantile) %>%
+    #         summarise(Q_rejectT = cochrans_q_het(ate = ate,
+    #                                              cate0 = first(mean_cate),
+    #                                              cate100 = last(mean_cate),
+    #                                              se0 = first(cate_LP_se),
+    #                                              se100 = last(cate_LP_se),
+    #                                              estimand = estimand)[2] < alpha) %>%
+    #         filter(Q_rejectT == T) %>%
+    #         pull(em)
+    #     
+    # # conduct bootstrap hypothesis one-sample test
+    # } else if (test == "BH") {
+    #     
+    #     bh_cates <- bh_cates %>%
+    #         mutate(t = case_when(family == "gaussian" ~ (o_cate-ate)/o_cate_se,
+    #                              family == "binomial" | family == "poisson" ~ (o_cate-log(ate))/o_cate_se))
+    #     
+    #     em_rejectT <- boots %>%
+    #         left_join(., bh_cates) %>%
+    #         filter(quantile == 0 | quantile == 100) %>%
+    #         mutate(boot_t = (cate-o_cate)/cate_se) %>%
+    #         group_by(quantile, em) %>%
+    #         summarise(bh_reject_pval = mean(abs(boot_t) > abs(t))) %>%
+    #         mutate(bh_rejectT = bh_reject_pval < alpha) %>%
+    #         filter(bh_rejectT == T) %>%
+    #         pull(em) %>%
+    #         unique()
+    #     
+    # } else {}
+    
+    ##### END OF OG BOOTSTRAP #####
     
     plot_statistics <- statistics %>%
         filter(em %in% em_rejectT) %>%
