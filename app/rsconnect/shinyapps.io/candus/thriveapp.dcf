@@ -1,0 +1,12 @@
+name: thriveapp
+title: thriveapp
+username: candus
+account: candus
+server: shinyapps.io
+hostUrl: https://api.shinyapps.io/v1
+appId: 12988366
+bundleId: 9287002
+url: https://candus.shinyapps.io/thriveapp/
+version: 1
+asMultiple: FALSE
+asStatic: FALSE
