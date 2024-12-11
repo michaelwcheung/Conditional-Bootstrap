@@ -8,16 +8,18 @@ data_ui <- function(id) {
     value = ns("tab"),
     tagList(
       useShinyFeedback(),
+      useShinyjs(),
       div(
         style = "margin-bottom: 50px;",
         h2("Upload Data"),
+        checkboxInput(ns("upload_sample"), "Load sample data"),
         fileInput(ns("upload"), NULL, buttonLabel = "Browse", accept = ".csv"),
         DT::dataTableOutput(ns("raw_data")),
         uiOutput(ns("next_varselect")),
-        uiOutput(ns("varselect")),
+        uiOutput(ns("varselect")), # add select number of interactions
         uiOutput(ns("next_varverify")),
         uiOutput(ns("varverify")),
-        DT::dataTableOutput(ns("varverify_table")),
+        DT::dataTableOutput(ns("varverify_table")), 
         uiOutput(ns("next_emprevalence")),
         uiOutput(ns("emprevalence")),
         DT::dataTableOutput(ns("emprevalence_table")),
@@ -31,27 +33,55 @@ data_server <- function(id, store) {
   moduleServer(id, function(input, output, session) {
     ns <- NS(id)
     
-    # load data from file upload
-    data <- reactive({
-      req(input$upload)
-      
-      ext <- tools::file_ext(input$upload$name)
-      switch(
-        ext,
-        csv = vroom::vroom(input$upload$datapath, delim=","),
-        validate("Invalid file; please upload a .csv file!")
-      )
+    # SAMPLE DATA OR UPLOAD DATA FRAMEWORK
+    listen_data <- reactive({
+      list(input$upload_sample, input$upload)
     })
     
-    # add raw data to the store
-    observeEvent(data(), {
+    rv <- reactiveValues(
+      data_sample = FALSE,
+      data_upload = FALSE
+    )
+    
+    
+    observeEvent(listen_data(), {
+      toy_dataset <- "https://raw.githubusercontent.com/michaelwcheung/Conditional-Bootstrap/refs/heads/main/test/data_droughts_malnutrition_10000.csv"
+      
       store$data <- NULL
-      store$data <- data() # might do additional cleaning?
-      # store$data <- data_1()[sample(nrow(data_1()), 10000, replace=F), ]
+      store$variable_verification <- NULL
+      if (input$upload_sample & !rv$data_upload) { # previously no uploaded data, now click sample
+        store$data <- read_csv(toy_dataset)
+        rv$data_sample <- TRUE
+      }
+      if (!rv$data_sample & !is.null(input$upload)) { # previously no sample data, now upload data
+        ext <- tools::file_ext(input$upload$name)
+        store$data <- switch(ext,
+                             csv = vroom::vroom(input$upload$datapath, delim = ","),
+                             validate("Invalid file. Please upload a csv file."))
+        rv$data_upload <- TRUE
+      }
+      if (rv$data_sample & !is.null(input$upload)) { # previously sample data, now upload data
+        ext <- tools::file_ext(input$upload$name)
+        store$data <- switch(ext,
+                             csv = vroom::vroom(input$upload$datapath, delim = ","),
+                             validate("Invalid file. Please upload a csv file."))
+        updateCheckboxInput(inputId = "upload_sample", value = F)
+        rv$data_sample <- FALSE
+        rv$data_upload <- TRUE
+      }
+      if (input$upload_sample & rv$data_upload) { # previously uploaded data, now click sample
+        store$data <- read_csv(toy_dataset)
+        shinyjs::reset("upload")
+        rv$data_sample <- TRUE
+        rv$data_upload <- FALSE
+      }
     })
     
     # show data table of raw data
-    output$raw_data <- DT::renderDataTable(DT::datatable(store$data, rownames=F, options=list(scrollX=T, scrollY="200px")))
+    output$raw_data <- DT::renderDataTable({
+      if (is.null(store$data)) return() 
+      DT::datatable(store$data, rownames=F, options=list(scrollX=T, scrollY="200px"))
+    })
     
     # start variable selection!
     output$next_varselect <- renderUI({
@@ -64,13 +94,24 @@ data_server <- function(id, store) {
       )
     })
     
+    # reset all store when variable selection starts
+    listen_next_varselect <- reactive({input$next_varselect})
+    
+    observeEvent(listen_next_varselect(), {
+      store$y_outcome <- NULL
+      store$z_treatment <- NULL
+      store$X_covariates <- NULL
+      store$P_candidates <- NULL
+      store$variable_verification <- NULL
+    })
+    
     # variable selection renders once button is clicked
     output$varselect <- renderUI({
       tagList(
         h3("Variable Selection"),
         fluidRow(
           column(
-            6,
+            4,
             selectInput(session$ns("select_outcome"), "Select outcome variable:", choices=c("", colnames(store$data)), multiple=F),
             conditionalPanel(
               "output.outcome_type == 'cat_binary'",
@@ -79,23 +120,28 @@ data_server <- function(id, store) {
             )
           ),
           column(
-            6,
+            4,
             selectInput(session$ns("select_treatment"), "Select treatment variable:", choices=c("", colnames(store$data)), multiple=F),
             conditionalPanel(
               "output.treatment_type == 'cat_binary'",
               ns = ns,
               selectInput(session$ns("select_treatment_level"), "Select a level to represent the treated group:", choices=NULL, multiple=F)
             )
-          )
+          ),
+          column(4)
         ),
         fluidRow(
           column(
-            6,
+            4,
             pickerInput(session$ns("select_covariates"), "Select covariates:", choices=colnames(store$data), multiple=T, options=list(`actions-box`=T))
           ),
           column(
-            6,
-            pickerInput(session$ns("select_candidates"), "Select candidate effect modifiers:", choices=colnames(store$data), multiple=T, options=list(`actions-box`=T))
+            4,
+            pickerInput(session$ns("select_candidates"), "Select candidate effect modifiers:", choices=colnames(store$data), multiple=T, options=list(`actions-box`=T)),
+          ),
+          column(
+            4, 
+            sliderInput(session$ns("select_interaction_dim"), "Select the number of interactions you would like to test:", value=2, min=1, max=5)
           )
         )
       )
@@ -123,6 +169,7 @@ data_server <- function(id, store) {
           inputId = "select_outcome_level",
           choices = c("", paste(input$select_outcome, "=", unique(na.omit(store$data[[input$select_outcome]]))))
         )
+        # store$variable_verification <- NULL
       }
     })
     
@@ -143,6 +190,7 @@ data_server <- function(id, store) {
           inputId = "select_treatment_level",
           choices = c("", paste(input$select_treatment, "=", unique(na.omit(store$data[[input$select_treatment]]))))
         )
+        # store$variable_verification <- NULL
       }
     })
     
@@ -241,6 +289,7 @@ data_server <- function(id, store) {
         updatePickerInput(inputId="select_candidates",
                           choices=colnames(store$data)[!(colnames(store$data) %in% c(input$select_outcome, input$select_treatment))],
                           selected=isolate(input$select_covariates))
+        # store$variable_verification <- NULL
     })
     
     # add to store
@@ -249,7 +298,8 @@ data_server <- function(id, store) {
         input$select_outcome,
         input$select_treatment,
         input$select_covariates,
-        input$select_candidates
+        input$select_candidates,
+        input$select_interaction_dim
       )
     })
     
@@ -259,6 +309,9 @@ data_server <- function(id, store) {
         store$z_treatment <- input$select_treatment
         store$X_covariates <- input$select_covariates
         store$P_candidates <- input$select_candidates
+        store$interaction_dim <- input$select_interaction_dim
+        store$variable_verification <- NULL
+        store$ems <- NULL
       }
     })
     
@@ -267,21 +320,16 @@ data_server <- function(id, store) {
       if (is.null(store$y_outcome) & is.null(store$z_treatment) & is.null(store$X_covariates) & is.null(store$P_candidates)) return()
       actionButton(
         session$ns("next_varverify"), 
-        " Next: Covariate Data Type Verification", 
+        " Next: Variable Verification", 
         icon("hand-pointer"), 
         class = "btn-outline-primary"
       )
     })
     
-    # variable verification renders once button is clicked
-    output$varverify <- renderUI({
-      tagList(
-        h3("Covariate Data Type Verification")
-      )
-    }) |> bindEvent(input$next_varverify)
+    listen_next_varverify <- reactive({input$next_varverify})
     
-    # display table of variables with assignments, data type, and percent null (and add to store)
-    observeEvent(input$next_varverify,{
+    # add table to store
+    observeEvent(listen_next_varverify(),{
       out <- store$data
       outcome <- store$y_outcome
       treatment <- store$z_treatment
@@ -314,18 +362,30 @@ data_server <- function(id, store) {
       store$variable_verification <- tab1
     })
     
-    output$varverify_table <- DT::renderDataTable(DT::datatable(store$variable_verification, rownames=F, options=list(scrollX=T, scrollY="200px"))) |> bindEvent(input$next_varverify)
+    # variable verification renders once button is clicked
+    output$varverify <- renderUI({
+      if (is.null(store$variable_verification)) return()
+      tagList(
+        h3("Variable Verification")
+      )
+    })
+    
+    # display table 
+    output$varverify_table <- DT::renderDataTable({
+      if (is.null(store$variable_verification)) return()
+      DT::datatable(store$variable_verification, rownames=F, options=list(scrollX=T, scrollY="200px"))
+    })
     
     # start effect modifier prevalence!
     output$next_emprevalence <- renderUI({
-      if (is.null(store$P_candidates)) return()
+      if (is.null(store$variable_verification)) return()
       actionButton(
         session$ns("next_emprevalence"),
         " Next: Confirm Effect Modifier Prevalence",
         icon("hand-pointer"),
         class = "btn-outline-primary"
       )
-    }) |> bindEvent(input$next_varverify)
+    })
     
     # effect modifier prevalence renders once button is clicked
     output$emprevalence <- renderUI({
@@ -351,6 +411,7 @@ data_server <- function(id, store) {
       treatment <- store$z_treatment
       covariates <- store$X_covariates
       candidates <- store$P_candidates
+      interaction_dim <- store$interaction_dim
       y <- pull(out, outcome)
       z <- pull(out, treatment)
       X <- select(out, -c(outcome, treatment))
@@ -417,7 +478,13 @@ data_server <- function(id, store) {
           rename_with(~ paste0(.x, "_1")) %>%
           cbind(., counter_P) # cumulatively, 1 way interaction (just the variable); based on binary/categorical you know the total number of ems; over generates an interaction that is the same
         
-        ems <- as.data.frame(model.matrix(~ .^2 - 1, data=full_P)) # change the '2' to a variable (1, 2, 3, 4, 5)
+        if (interaction_dim == 1) {
+          ems_formula <- formula("~ . - 1")
+        }
+        else {
+          ems_formula <- formula(paste0("~ .^", interaction_dim, " - 1"))
+        }
+        ems <- as.data.frame(model.matrix(ems_formula, data=full_P)) # change the '2' to a variable (1, 2, 3, 4, 5)
         
         remove <- c(paste0(names(P), "_0"), paste0(names(P), "_1"),
                     paste0(names(P), "_1:", names(P), "_0"),

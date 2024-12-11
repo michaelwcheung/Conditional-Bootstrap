@@ -10,7 +10,7 @@ about_ui <- function(id) {
       div(
         style = "margin-bottom: 50px;",
         h2("Transparent High-dimensional Reproducible Inference through Bootstrap Validation and Exploration (THRIVE)"),
-        p("Perhaps explain the method briefly."),
+        p("THRIVE is a method to identify effect modifiers by bootstrapping conditional average treatement effects (CATEs) over different quantile levels of candidate effect modifiers."),
         h3("How to use the Shiny App"),
         tags$ul(
           tags$li("In the 'Upload Data' tab, upload your dataset and select variables for analysis."),

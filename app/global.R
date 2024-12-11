@@ -15,6 +15,7 @@ library(RColorBrewer)
 library(promises)
 library(future)
 library(ipc)
+library(shinyjs)
 # library(foreach) # parallel computation 
 # library(doParallel) # detect cores; parallel computation
 # library(doSNOW) # parallel computation

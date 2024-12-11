@@ -51,7 +51,7 @@ bootstrap_ui <- function(id) {
           c(
             "Outcome regression (adjusted)" = "lr",
             "IP weighting" = "iptw",
-            "Doubly robust (currently does not work with bootstrap hypothesis test)" = "dr"
+            "Doubly robust (currently does not work with bootstrap hypothesis test)" = "dr" # change language
           ),
           width = "100%"
         ),
@@ -63,6 +63,7 @@ bootstrap_ui <- function(id) {
         ),
         uiOutput(ns("bootstrap")),
         uiOutput(ns("bootstrap_progress")),
+        br(),
         uiOutput(ns("next_results"))
       )
     )
@@ -86,7 +87,7 @@ bootstrap_server <- function(id, store) {
     
     # start bootstrap!
     output$bootstrap <- renderUI({
-      if (is.null(store$P_candidates)) return()
+      if (is.null(store$ems)) return()
       tagList(
         actionButton(
           session$ns("bootstrap"),
@@ -100,12 +101,6 @@ bootstrap_server <- function(id, store) {
           icon("hand-pointer"),
           class = "btn-danger"
         )
-        #,
-        # progressBar(
-        #   session$ns("bootstrap_progress"),
-        #   value = 0,
-        #   display_pct = T
-        # )
       )
     })
     
