@@ -35,6 +35,7 @@ options(future.globals.maxSize = 8000*1024^2)
 ## X: Matrix of confounders
 ## P: Matrix of binary candidate effect modifiers
 ## data: Full data sample
+## interactions: Dimension of interactions
 ## quantiles: Quantiles of EMs to bootstrap and test; numeric vector (0 and 100 must be included)
 ## B: Number of bootstrap samples
 ## estimand: Either multiplicative ("or" for odds ratio, "rr" for risk ratio) or additive ("rd" for risk difference) scale
@@ -117,12 +118,22 @@ thrive <- function(y, z, X, P, data,
         rename_with(~ paste0(.x, "_1")) %>%
         cbind(., counter_P)
     
-    ems <- as.data.frame(model.matrix(~ .^2 - 1, data = full_P))
+    ems <- as.data.frame(model.matrix(~ .^3 - 1, data = full_P))
     
     remove <- c(paste0(names(P), "_0"), paste0(names(P), "_1"), 
                 paste0(names(P), "_1:", names(P), "_0"),
                 paste0(names(P), "_0:", names(P), "_1"))
     
+    foo <- strsplit(colnames(ems), ':')
+    remove <- c()
+    for (x in foo) {
+      if (n_distinct(str_replace_all(x, '_[:digit:]$', '')) < length(x)) {
+        remove <- c(remove, paste0(x, collapse=':'))
+      }
+    }
+    remove <- c(paste0(names(P), "_0"), paste0(names(P), "_1"), remove)
+    
+    # not sure if ^^^ remove version will work with mlP > 0
     if (length(mlP) != 0) {
         remove <- c(remove, names(full_P)[str_detect(names(full_P), paste(mlP, collapse="|"))])
     }
@@ -253,7 +264,7 @@ thrive <- function(y, z, X, P, data,
             cate <- cate_estimate[1]
             cate_se <- cate_estimate[2]
             
-            p(message = sprintf("em: %s | quantile: %d | bootstrap : %d", em, q, b))
+            p(message = sprintf("em: %s | quantile: %d | bootstrap : %d", em, q, b)) # remove em 
             
             return(tibble(
               quantile = q,
@@ -634,3 +645,5 @@ thrive <- function(y, z, X, P, data,
                 plot = plot))
 }
 
+# run shiny app
+runApp("app")

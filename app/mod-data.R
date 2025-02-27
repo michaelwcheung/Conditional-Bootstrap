@@ -490,6 +490,15 @@ data_server <- function(id, store) {
                     paste0(names(P), "_1:", names(P), "_0"),
                     paste0(names(P), "_0:", names(P), "_1")) 
         
+        foo <- strsplit(colnames(ems), ':')
+        remove <- c()
+        for (x in foo) {
+          if (n_distinct(str_replace_all(x, '_[:digit:]$', '')) < length(x)) {
+            remove <- c(remove, paste0(x, collapse=':'))
+          }
+        }
+        remove <- c(paste0(names(P), "_0"), paste0(names(P), "_1"), remove)
+        
         if (length(mlP) != 0) {
           remove <- c(remove, names(full_P)[str_detect(names(full_P), paste(mlP, collapse="|"))])
         }

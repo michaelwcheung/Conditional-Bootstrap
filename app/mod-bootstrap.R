@@ -51,7 +51,7 @@ bootstrap_ui <- function(id) {
           c(
             "Outcome regression (adjusted)" = "lr",
             "IP weighting" = "iptw",
-            "Doubly robust (currently does not work with bootstrap hypothesis test)" = "dr" # change language
+            "Doubly robust (variance estimates may be biased)" = "dr"
           ),
           width = "100%"
         ),
