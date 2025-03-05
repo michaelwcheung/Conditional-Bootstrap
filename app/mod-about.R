@@ -9,13 +9,13 @@ about_ui <- function(id) {
     tagList(
       div(
         style = "margin-bottom: 50px;",
-        h2("Transparent High-dimensional Reproducible Inference through Bootstrap Validation and Exploration (THRIVE)"),
-        p("THRIVE is a method to identify effect modifiers by bootstrapping conditional average treatement effects (CATEs) over different quantile levels of candidate effect modifiers."),
+        h2("Transparent High-dimensional Reproducible Inference through Validation and Exploration (THRIVE)"),
+        p("THRIVE is a method to identify effect modifiers by estimating conditional average treatement effects (CATEs) on resamples of pseudopopulations with different quantile levels of potential effect modifiers."),
         h3("How to use the Shiny App"),
         tags$ul(
           tags$li("In the 'Upload Data' tab, upload your dataset and select variables for analysis."),
-          tags$li("In the 'Set parameters' tab, set your parameters for the bootstrap process."),
-          tags$li("In the 'Bootstrap results' tab, view and download plots and tables about your effect modifiers by quantiles.")
+          tags$li("In the 'Set Hyper Parameters' tab, set your parameters for the resampling process."),
+          tags$li("In the 'Results' tab, view and download plots and tables about your effect modifiers by quantiles.")
         ),
         p("Please submit any feedback or questions to ", a(href="https://forms.gle/5e2kCDpNN2VvVkSd7", "this form", .noWS = "outside"), ". Thank you!"),
         actionButton(ns("start"),

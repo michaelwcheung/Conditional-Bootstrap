@@ -4,12 +4,12 @@ results_ui <- function(id) {
   ns <- NS(id)
   
   tabPanel(
-    title = "Bootstrap Results",
+    title = "Results",
     value = ns("tab"),
     tagList(
       div(
         style = "margin-bottom: 50px;",
-        h2("Bootstrap Results"),
+        h2("Results"),
         uiOutput(ns("plot_panel")),
         uiOutput(ns("em_quantile")),
         DT::dataTableOutput(ns("em_quantile_table")),
@@ -124,7 +124,7 @@ results_server <- function(id, store) {
         theme_bw() + 
         labs(
           x="Quantile",
-          title="Bootstrapped CATE Estimates by Quantile",
+          title="Resampled CATE Estimates by Quantile",
           color="Effect Modifier"
         )
       
@@ -143,94 +143,6 @@ results_server <- function(id, store) {
       store$y_min <- y_min
       store$y_max <- y_max
     })
-    
-    # plot_results <- reactive({
-    #   statistics <- store$statistics
-    #   em_rejectT <- store$em_rejectT
-    #   ate <- store$ate
-    #   ate_confint <- store$ate_confint
-    #   quantiles <- store$quantiles
-    #   print(statistics)
-    #   print(em_rejectT)
-    #   
-    #   store$plot_statistics <- NULL
-    #   store$em_colors <- NULL
-    #   store$cate_edges <- NULL
-    #   store$em_quantile_table <- NULL
-    #   store$regression_coefficients_table <- NULL
-    #   
-    #   # plot ATE 
-    #   y_min <- min(c(store$plot_statistics$median_cate, ate_confint[1]))
-    #   y_max <- max(c(store$plot_statistics$median_cate, ate_confint[2]))
-    #   plot <- ggplot() +
-    #     scale_x_continuous(breaks = quantiles, limits = c(min(quantiles), max(quantiles))) +
-    #     scale_y_continuous(limits = c(y_min, y_max)) +
-    #     geom_rect(aes(
-    #       xmin = min(quantiles), xmax = max(quantiles),
-    #       ymin = ate_confint[1], ymax = ate_confint[2],
-    #       text = sprintf("ATE upper 95%% CI: %s\nATE lower 95%% CI: %s", round(ate_confint[2], 5), round(ate_confint[1], 5))
-    #     ), fill = "grey", alpha = 0.5) +
-    #     geom_text(aes(
-    #       x = 0,
-    #       y = ate + 0.04*(y_max - y_min),
-    #       label = "ATE",
-    #       text = sprintf("ATE: %s", round(ate, 5))
-    #     )) +
-    #     geom_hline(aes(
-    #       yintercept = ate,
-    #       text = sprintf("ATE: %s", round(ate, 5))
-    #     )) +
-    #     labs(
-    #       x="Quantile",
-    #       title="Bootstrapped CATE Estimates by Quantile",
-    #       color="Effect Modifier"
-    #     )
-    # 
-    #   if (store$estimand == "or") {
-    #     plot <- plot +
-    #       ylab("Median CATE (odds ratio)")
-    #   } else if (store$estimand == "rd") {
-    #     plot <- plot +
-    #       ylab("Median CATE (risk difference)")
-    #   } else if (store$estimand == "rr") {
-    #       plot <- plot +
-    #           ylab("Median CATE (risk ratio)")
-    #   } else {}
-    #   
-    #   cls <- rep(c(brewer.pal(8,"Dark2"), 
-    #                brewer.pal(10, "Paired"), 
-    #                brewer.pal(12, "Set3"), 
-    #                brewer.pal(8,"Set2"), 
-    #                brewer.pal(9, "Set1"), 
-    #                brewer.pal(8, "Accent"),  
-    #                brewer.pal(9, "Pastel1"),  
-    #                brewer.pal(8, "Pastel2")),4)
-    #   cls_names <- unique(store$plot_statistics$em)
-    #   em_cols = cls[1:length(cls_names)]
-    #   names(em_cols) = cls_names
-    #   
-    #   if (length(em_rejectT) > 0) {
-    #     plot <- plot + 
-    #       geom_point(data=store$plot_statistics,
-    #                               aes(x=quantile, y=median_cate, group=em,
-    #                                   color=color, alpha=I(alpha),
-    #                                   text = sprintf("Quantile: %s \nMedian CATE: %s \nEffect Modifier: %s", quantile, round(median_cate, 5), em))) +
-    #       geom_segment(data=store$cate_edges,
-    #                    aes(x=x1, xend=x2, y=y1, yend=y2,
-    #                        color=color, alpha=alpha,
-    #                        linetype=linetype, group=em)) +
-    #       theme_bw() + 
-    #       scale_color_manual(values = em_cols) + 
-    #       scale_alpha(guide = 'none') +
-    #       scale_linetype_identity(guide = "none",
-    #                               labels = c("Significant","Between Significance Threshold","Insignificant"),
-    #                               breaks = c("solid","dashed","dotted"))
-    #   }
-    #   
-    #   store$plot <- plot
-    #   
-    #   
-    # }) # end plot results
     
     output$plot_panel <- renderUI({
       if (is.null(store$statistics)) return()
@@ -355,7 +267,7 @@ results_server <- function(id, store) {
       }
       else {
         tagList(
-          h3("Bootstrapped CATEs by Quantile and Subgroup")
+          h3("Resampled CATEs by Quantile and Subgroup")
         )
       }
     })
@@ -408,7 +320,7 @@ results_server <- function(id, store) {
         scrollY="200px",
         rowCallback = JS(
          "function (row, data, displayNum, displayIndex, dataIndex) {",
-         "var row_name = 'This value means that a one percentile increase in ' + data[0] + ' changes the risk of outcome by ' + data[1] + '.';",
+         "var row_name = 'This value means that a one unit increase in the prevalence of ' + data[0] + ' changes the CATE by ' + data[1] + '.';",
          "$(row).find('td').attr('title', row_name);",
          "}"
         )

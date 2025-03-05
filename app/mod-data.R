@@ -137,11 +137,11 @@ data_server <- function(id, store) {
           ),
           column(
             4,
-            pickerInput(session$ns("select_candidates"), "Select candidate effect modifiers:", choices=colnames(store$data), multiple=T, options=list(`actions-box`=T)),
+            pickerInput(session$ns("select_candidates"), "Select candidate variables:", choices=colnames(store$data), multiple=T, options=list(`actions-box`=T)),
           ),
           column(
             4, 
-            sliderInput(session$ns("select_interaction_dim"), "Select the number of interactions you would like to test:", value=2, min=1, max=5)
+            sliderInput(session$ns("select_interaction_dim"), "Select the size of the cross-classifications you would like to test:", value=2, min=1, max=5)
           )
         )
       )
@@ -349,9 +349,9 @@ data_server <- function(id, store) {
         "Role" = sapply(names(out), function(x) {
           if (x == outcome) return("outcome")
           if (x == treatment) return("treatment")
-          if (x %in% covariates & x %in% candidates) return("covariate, candidate EM")
+          if (x %in% covariates & x %in% candidates) return("covariate, candidate variable")
           if (x %in% covariates) return("covariate")
-          if (x %in% candidates) return("candidate EM")
+          if (x %in% candidates) return("candidate variable")
           return("unassigned")
         }),
         "Data Type" = sapply(out, check_data_type), # options: binary, continuous, categorical
@@ -381,7 +381,7 @@ data_server <- function(id, store) {
       if (is.null(store$variable_verification)) return()
       actionButton(
         session$ns("next_emprevalence"),
-        " Next: Confirm Effect Modifier Prevalence",
+        " Next: Confirm Potential Effect Modifier Prevalence",
         icon("hand-pointer"),
         class = "btn-outline-primary"
       )
@@ -390,7 +390,7 @@ data_server <- function(id, store) {
     # effect modifier prevalence renders once button is clicked
     output$emprevalence <- renderUI({
       tagList(
-        h3("Effect Modifier Prevalence in Data")
+        h3("Potential Effect Modifier Prevalence in Data")
       )
     }) |> bindEvent(emprevalence_show(input$next_varverify, input$next_emprevalence))
     
@@ -417,7 +417,7 @@ data_server <- function(id, store) {
       X <- select(out, -c(outcome, treatment))
       P <- select(X, all_of(candidates))
       
-      withProgress(message = "Computing Effect Modifier Prevalence", value = 0, {
+      withProgress(message = "Computing Potential Effect Modifier Prevalence", value = 0, {
         # check that candidate effect modifiers are named
         if (sum(is.na(colnames(P))) != 0) {
           colnames(P)[which(is.na(colnames(P)))] <- paste0("em", 1:sum(is.na(colnames(P))))
@@ -509,7 +509,7 @@ data_server <- function(id, store) {
         
         # check positivity: print prevalence of observations for each effect modifier interaction (and size)
         incProgress(0.25, detail = HTML(paste("Checking positivity.")))
-        tab1 <- tibble("Effect Modifier (Interaction)" = names(ems),
+        tab1 <- tibble("Potential Effect Modifier (Cross-Classification)" = names(ems),
                        "Prevalence" = paste0(round(apply(ems, 2, mean, na.rm=T)*100, 2), "%"),
                        "In-Count" = apply(ems, 2, sum, na.rm=T),
                        "Out-Count" = apply(ems, 2, function(x) sum(x==0, na.rm=T)),
@@ -522,7 +522,7 @@ data_server <- function(id, store) {
           prob_em <- tab1 %>% 
             filter(`In-Count`/nrow(ems) < 0.05 | `Out-Count`/nrow(ems) < 0.05) %>%
             pull(`Effect Modifier (Interaction)`)
-          warning("The following interactions have less than 5% or more than 95% prevalence. Bootstrap results may be biased:")
+          warning("The following cross-classifications have less than 5% or more than 95% prevalence. Resampling results may be biased:")
           print(prob_em)
         }
         incProgress(0.25, detail = HTML(paste("Complete.")))
@@ -565,12 +565,12 @@ data_server <- function(id, store) {
       if ((any(store$emprevalence_table$`In-Count`/nrow(store$ems) < 0.05) | any(store$emprevalence_table$`Out-Count`/nrow(store$ems) < 0.05))) {
         return(tagList(
           br(),
-          HTML("The interactions in <span style=\"background-color: #f8d4d5;\">red</span> have less than 5% or more than 95% prevalence. Bootstrap results may be biased."),
+          HTML("The interactions in <span style=\"background-color: #f8d4d5;\">red</span> have less than 5% or more than 95% prevalence. Resampled results may be biased."),
           br(),
           br(),
           actionButton(
             session$ns("next_bootstrap"),
-            " Next: Set Bootstrap Parameters",
+            " Next: Set Hyper Parameters",
             icon("hand-pointer"),
             class = "btn-outline-primary"
           )
@@ -578,7 +578,7 @@ data_server <- function(id, store) {
       }
       actionButton(
         session$ns("next_bootstrap"),
-        " Next: Set Bootstrap Parameters",
+        " Next: Set Hyper Parameters",
         icon("hand-pointer"),
         class = "btn-outline-primary"
       )
