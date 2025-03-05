@@ -118,7 +118,7 @@ thrive <- function(y, z, X, P, data,
         rename_with(~ paste0(.x, "_1")) %>%
         cbind(., counter_P)
     
-    ems <- as.data.frame(model.matrix(~ .^3 - 1, data = full_P))
+    ems <- as.data.frame(model.matrix(~ .^2 - 1, data = full_P))
     
     remove <- c(paste0(names(P), "_0"), paste0(names(P), "_1"), 
                 paste0(names(P), "_1:", names(P), "_0"),
@@ -642,7 +642,8 @@ thrive <- function(y, z, X, P, data,
     return(list(table1 = tab1,
                 boots = boots,
                 stats = statistics,
-                plot = plot))
+                plot = plot,
+                em_rejectT = em_rejectT))
 }
 
 # run shiny app

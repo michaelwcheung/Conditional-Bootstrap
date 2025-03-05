@@ -1,0 +1,85 @@
+---
+title: "Case Study: Demographic and Health Survey Data"
+output:
+  html_document:
+    df_print: paged
+  html_notebook: default
+  pdf_document: default
+header-includes: \usepackage{placeins}
+
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Case Study: Demographic and Health Survey Data
+
+This is an example of how to use the `thrive` function, with data from the above case study. 
+```{r read-data}
+data <- read.csv('data_droughts_malnutrition_101822.csv')
+data <- data[sample(nrow(data), 50000, replace=F),]
+head(data)
+```
+
+```{r set-parameters}
+y <- pull(data, stunted)
+z <- pull(data, drought)
+X <- select(data, -c(stunted, drought))
+P <- select(X, education_none, mass_media, rural_residence)
+quantiles <- c(0, 20, 40, 60, 80, 100)
+B <- 200
+estimand <- 'rd'
+test <- 'Q'
+```
+
+You can add `cores > 1` for multiprocessing. 
+```{r run-thrive}
+results <- thrive(y, z, X, P, data, quantiles, B, cores=4)
+```
+From the 15 potential effect modifiers, Cochran's Q test identified 11 out of the 15 effect modifiers that rejected the null of homogeneity. This is unadjusted for multiple comparisons. 
+```{r plot}
+results$plot
+```
+
+The largest CATEs in magnitude belonged to children whose mothers were not educated and consumed mass media (education_none_1:mass_media_1; increased risk of stunted growth) and to children whose mothers did not consume mass media and did not live in a rural area (mass_media_0:rural_residence_0; decreased risk of stunted growth).
+```{r cate-subgroup}
+statistics <- results$stats
+em_rejectT <- results$em_rejectT
+
+em_quantile_table <- statistics %>%
+  filter(em %in% em_rejectT) %>%
+  select(quantile, em, median_cate, mean_cate, cate_ci_lwr, cate_ci_upr) %>%
+  arrange(desc(abs(median_cate))) %>%
+  mutate(across(c(median_cate, mean_cate, cate_ci_lwr, cate_ci_upr), \(x) round(x, 3))) %>%
+  dplyr::rename(
+    "Quantile" = quantile,
+    "Effect Modifier" = em,
+    "Median CATE" = median_cate,
+    "Mean CATE" = mean_cate,
+    "Lower 95% CI" = cate_ci_lwr,
+    "Upper 95% CI" = cate_ci_upr
+  )
+
+em_quantile_table
+```
+
+The largest change in treatment effect across prevalence of effect modifier was no mass media consumption and no rural residence, i.e. for every unit increase in the prevalence, the CATE decreases by 0.067 percentage points. 
+```{r cate-linreg}
+regression_coefficients_table <- statistics %>%
+  filter(em %in% em_rejectT) %>%
+  group_by(em) %>%
+  group_modify(~ broom::tidy(lm(median_cate ~ quantile, data = .x))) %>%
+  filter(term != "(Intercept)") %>%
+  select(em, estimate, p.value) %>%
+  arrange(desc(abs(estimate))) %>%
+  mutate(estimate = round(estimate, 5),
+         p.value = ifelse(p.value < 0.001, "<0.001", as.character(round(p.value, 3)))) %>%
+  dplyr::rename(
+    "Effect Modifier" = em,
+    "Coefficient Estimate" = estimate,
+    "P-value" = p.value
+  )
+
+regression_coefficients_table
+```

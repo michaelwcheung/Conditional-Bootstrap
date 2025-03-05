@@ -16,14 +16,7 @@ library(promises)
 library(future)
 library(ipc)
 library(shinyjs)
-# library(foreach) # parallel computation 
-# library(doParallel) # detect cores; parallel computation
-# library(doSNOW) # parallel computation
-# library(doFuture) # parallel computation
-# library(progressr) # progress bar
 library(data.table)
-# library(parallel)
-# library(future.apply)
 plan(multisession) # try multicore and specify number of workers (does this not matter once we hit plan(cluster) in the bootstrap?)
 # registerDoFuture()
 # handlers(global = TRUE)
