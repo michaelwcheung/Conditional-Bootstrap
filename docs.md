@@ -4,16 +4,16 @@ Documentation & Notes for the THRIVE Shiny App (In Progress)
 1. Open the `app/global.R` file and click 'Run App', or run `runApp()`.
 
 ## 'Upload Data' tab
-1. In the 'Upload Data' tab, upload a csv file of your data.
+1. In the 'Upload Data' tab, upload a csv file of your data or choose 'Load sample data'.
     * Expected output: a data table of your uploaded data; a 'Next: Variable Selection' button.
     * Purpose: double check that the uploaded dataset is correct.
 2. Click 'Next: Variable Selection'.
     * Expected output: four selection boxes with dropdown menus for selecting the outcome variable, treatment variable, covariate(s), and candidate variable(s). A slider for the dimension of cross-classifications to consider. 
     * Purpose: restrict user access. 
-3. Select the variables for outcome, treatment, covariate(s), and potential effect modifier(s). 
+3. Select the variables for outcome, treatment, covariate(s), and candidate variable(s). 
     * Expected output: success feedback (green) for outcome variable and treatment variable selections; a 'Next: Covariate Data Type Verification' button.
     * Purpose: define causal model for analysis.
-    * Note: for the sake of computation and plotting, please only select a few candidate effect modifier(s), e.g. \leq 4, at the moment.
+    * Note: for the sake of computation and plotting, please only select a few candidate effect modifier(s), e.g. $\leq$ 4, at the moment.
 4. Click 'Next: Covariate Data Type Verification'.
     * Expected output: a data table of the role, data type, and percent NA for each variable in your dataset; a 'Next: Confirm Potential Effect Modifier Prevalence' button.
     * Purpose: double check that each variable is coded correctly by role, data type, and missingness. 
@@ -27,19 +27,19 @@ Documentation & Notes for the THRIVE Shiny App (In Progress)
   
 ## 'Set Hyper Parameters' tab
 1. Select hyper parameters, which include the quantiles, type of estimand, estimation method, and number of resamples. Click 'Start Resampling!' button.
-    * Expected output: a progress bar with some information; a 'Next: See Results' button upon completion
+    * Expected output: a progress bar with some information including time to completion; a 'Next: See Results' button upon completion
     * Purpose: perform the resample and provide user with some expectation of runtime
 2. Click 'Next: See Results' button.
     * Expected output: tab switches to the 'Results' tab.
     * Purpose: notify user that resampling is complete; easy access to switch tabs (avoid scrolling to the top).
   
 ## 'Results' tab
-1. If no significant effect modifiers are observed, the only things on this page should be a plot of the ATE and its 95% CI across the quantiles, and a message regarding the lack of significant effect modifiers. 
-2. Otherwise, one should see the following three items when there are significant effect modifiers:
+1. If no significant effect modifiers are identified, the only things on this page should be a plot of the ATE and its 95% CI across the quantiles, and a message regarding the lack of significant effect modifiers. 
+2. Otherwise, one should see the following three items when there are identified effect modifiers:
     * 'Resampled CATE Estimates by Quantile plot': an interactive plotly plot of the effect modifiers, their median CATEs and the ATE for comparison. Select/deselect legend items to edit the plot and hover over points to see the value of the corresponding CATE.
     * 'Resampled CATEs by Quantile and Subgroup' table: a table of each quantile and effect modifier combination present on the plot, their median/mean CATEs and 95% CI.
     * 'Linear Regression Coefficients of CATEs on Quantile by Effect Modifier' table: a table of each effect modifier and their linear regression coefficient estimate (include exact linear model formula). Hover over each row to see an interpretation of the coefficient. 
-3. All results are downloadable for your convenience. 
+3. All results can be downloaded for your convenience. 
 
 
 # Global Store Dictionary
@@ -72,30 +72,8 @@ Documentation & Notes for the THRIVE Shiny App (In Progress)
 - **store$plot**: ggplot of resampled CATE estimates by quantile
 
 
-# Example
-- Dataset: data_droughts_malnutrition_.csv (345,499 rows x 12 columns)
-- Note: due to the size of the dataset, some buttons have delayed outputs, max 5 seconds; please be patient!
-- Modification: One can uncomment line 59 in the `mod-data.R` file to use a sampled dataset of size 10,000 to reduce runtime for testing purposes. This may affect effect modifier prevalence and the results.
-
-## Parameters
-- outcome: stunted (binary)
-- treatement: drought (binary)
-- covariates: all (binary)
-- candidate effect modifiers: education_none, mass_media, rural_residence (binary; total of 15 with interactions)
-- quantile: median: 0, 50, 100
-- estimand: risk difference
-- estimation method: linear regression
-- number of resamples (and their approximate runtimes): 10 (8 min), 50 (40 min :cry:), 100 (1 hour 17 min :sob:); by extrapolation, 1000 resamples would take 13 hours 20 min :skull: and therefore was not attempted. 
-- plots, tables: see attached folder `results` for all 3 outputs/results
-
 # Notes, Unresolved Bugs
 - Please select only a few candidate effect modifiers at the moment (computation-wise, color-options-on-the-plot-wise)
 - Please avoid clicking buttons multiple times as this adds runs. 
 - Please ensure that the custom quantile includes 0 and 100, and each number is separated by a comma. 
-- To stop (terminate) the bootstrap runs, please terminate in console as this functionality has not been implemented within the app.
-- For the estimation method 'IP weighting', propensity scores are calculated for each bootstrapped sample (adds a factor of n complexity). We may instead just use the propensity scores calculated on the entire dataset per our previous conversation (removes the factor of n complexity). 
-- The progress bar does not seem to accurately reflect the percentage (of bootstraps completed).
-- You may re-upload a different dataset and restart the process, but some of the UI may not appear/disappear as expected (e.g. leftover tables from previous dataset). The app will still function, but if you would like a fresh start I would recommend terminating the app and running it again at the moment.
 - The plots downloaded from plotly's interactive plot leave legend items cutoff.
-- Make the legend look prettier (currently using an annotation for linetype). 
-- Please contact candusyshi@gmail.com or use the form available at the top of the app for any clarifications, comments, questions, etc. Thank you! :smile:
